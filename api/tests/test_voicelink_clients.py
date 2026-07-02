@@ -388,8 +388,10 @@ async def test_signup_stash_stores_secret_and_never_provisions(monkeypatch):
     assert update.args == (11,)
     # ONLY the secret is written — no status/client_id churn at signup.
     assert set(update.kwargs) == {"provision_secret"}
+    # The standard default is stored (NOT the user's signup password, which is
+    # never forwarded to VoiceLink).
     assert decrypt_provision_secret(update.kwargs["provision_secret"]) == (
-        "platform-pass-xyz"
+        "12345678"
     )
 
 
@@ -425,10 +427,14 @@ async def test_signup_stash_never_raises(monkeypatch):
 # ======== PASSWORD / OWNER RESOLUTION ========
 
 
-def test_generate_client_password_is_nonempty_and_random():
+def test_generate_client_password_returns_configured_default():
+    from api.services.voicelink_clients.service import default_client_password
+
     pw = generate_client_password()
-    assert isinstance(pw, str) and len(pw) >= 16
-    assert pw != generate_client_password()
+    assert isinstance(pw, str) and pw
+    # Standardized on a single known default (not random) so the owner can
+    # reveal/hand it out from the admin panel.
+    assert pw == default_client_password() == generate_client_password()
 
 
 def test_resolve_org_owner_prefers_signup_owner():

@@ -227,13 +227,14 @@ async def stash_voicelink_signup_secret(
 ) -> None:
     """Best-effort signup hook — NEVER raises and never fails signup.
 
-    Stores ONLY an encrypted copy of the signup password
+    Stores ONLY an encrypted copy of the standard default client password
     (``voicelink_provision_secret``) so the lazy provisioner
     (:func:`ensure_voicelink_client` — first KYC entry, number purchase, admin
-    create) can create the VoiceLink client later with the same platform
-    password. No VoiceLink client is created at signup. Skips ADMIN_EMAILS
-    users entirely (the deployment owner uses the reseller account) and
-    no-ops when ``VOICELINK_PROVISION_KEY`` is unset.
+    create) can create the VoiceLink client later with a single known password
+    the owner can reveal from the admin panel. The user's own signup password
+    is NOT forwarded to VoiceLink. No VoiceLink client is created at signup.
+    Skips ADMIN_EMAILS users entirely (the deployment owner uses the reseller
+    account) and no-ops when ``VOICELINK_PROVISION_KEY`` is unset.
     """
     try:
         if is_admin_email(email):
@@ -243,7 +244,7 @@ async def stash_voicelink_signup_secret(
             )
             return
 
-        secret = encrypt_provision_secret(password)
+        secret = encrypt_provision_secret(default_client_password())
         if secret:
             await db_client.update_organization_voicelink(
                 organization_id, provision_secret=secret
@@ -256,13 +257,31 @@ async def stash_voicelink_signup_secret(
         )
 
 
-def generate_client_password(length: int = 24) -> str:
-    """A strong random password for a platform-managed VoiceLink client.
+# Default password for platform-managed VoiceLink clients. The owner wants a
+# single known password across clients so it can be shown/handed out from the
+# admin panel; override per deployment via env, or per client via the admin
+# "record password" action. NOTE: this becomes the client's real VoiceLink
+# portal password ONLY for clients we create from now on — VoiceLink has no
+# change-password API, so pre-existing clients keep whatever they were made
+# with until reset in the VoiceLink portal.
+VOICELINK_DEFAULT_CLIENT_PASSWORD = os.getenv(
+    "VOICELINK_DEFAULT_CLIENT_PASSWORD", "12345678"
+)
 
-    The end user never logs into VoiceLink directly (the reseller manages the
-    client), so this is used only for ``create_client`` and never surfaced.
+
+def default_client_password() -> str:
+    """The configured default password for a platform-managed VoiceLink client."""
+    return VOICELINK_DEFAULT_CLIENT_PASSWORD
+
+
+def generate_client_password(length: int = 24) -> str:
+    """Back-compat shim — now returns the configured default client password.
+
+    Historically a random token; the deployment now standardizes on a single
+    known password (:data:`VOICELINK_DEFAULT_CLIENT_PASSWORD`) so the owner can
+    reveal/hand it out from the admin panel. ``length`` is ignored.
     """
-    return _stdlib_secrets.token_urlsafe(length)
+    return default_client_password()
 
 
 def resolve_org_owner(organization: Any) -> Optional[Any]:

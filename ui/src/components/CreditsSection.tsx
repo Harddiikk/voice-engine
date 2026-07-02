@@ -7,6 +7,7 @@ import { client } from "@/client/client.gen";
 import { Button } from "@/components/ui/button";
 import { useLeadForms } from "@/context/LeadFormsContext";
 import { useAuth } from "@/lib/auth";
+import { BOOK_A_MEETING_URL } from "@/lib/brand";
 
 interface PackFeatures {
   api: boolean;
@@ -266,13 +267,20 @@ export function CreditsSection() {
               </a>
             </p>
           </div>
-          <Button
-            variant="brand"
-            className="shrink-0"
-            onClick={() => openEnterprise("billing_custom_pricing")}
-          >
-            Contact us · Book a meeting
-          </Button>
+          <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+            <Button variant="brand" className="w-full sm:w-auto" asChild>
+              <a href={BOOK_A_MEETING_URL} target="_blank" rel="noopener noreferrer">
+                Book a meeting
+              </a>
+            </Button>
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+              onClick={() => openEnterprise("billing_custom_pricing")}
+            >
+              Or send us your details
+            </button>
+          </div>
         </div>
       </div>
 

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { useAppConfig } from "@/context/AppConfigContext";
+import { BOOK_A_MEETING_URL } from "@/lib/brand";
 
 import { CaptchaChallenge } from "./CaptchaChallenge";
 import {
@@ -134,6 +135,17 @@ export function EnterpriseModal({ open, onOpenChange, source, prefill }: Enterpr
         showDeployment={showDeployment}
         emailError={emailError}
       />
+      <p className="mt-4 text-center text-sm text-muted-foreground">
+        Prefer to talk now?{" "}
+        <a
+          href={BOOK_A_MEETING_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-foreground underline underline-offset-4"
+        >
+          Book a meeting
+        </a>
+      </p>
     </LeadModalShell>
   );
 }
