@@ -26,6 +26,11 @@ export const DEFAULT_VOICEMAIL_DETECTION_CONFIGURATION: VoicemailDetectionConfig
     long_speech_timeout: 8.0,
 };
 
+export interface WorkflowModelVoiceOverride {
+    voice: string;
+    language?: string | null;
+}
+
 export interface ModelOverrides {
     llm?: {
         provider?: string;
@@ -67,6 +72,7 @@ export interface WorkflowConfigurations {
     context_compaction_enabled?: boolean;  // Summarize context on node transitions to remove stale tool calls
     model_overrides?: ModelOverrides;  // Per-workflow model configuration overrides
     model_configuration_v2_override?: OrganizationAiModelConfigurationV2;  // Full v2 model configuration override
+    model_voice_override?: WorkflowModelVoiceOverride;  // Per-workflow voice/language pick layered onto the effective config
     [key: string]: unknown;  // Allow additional properties for future configurations
 }
 

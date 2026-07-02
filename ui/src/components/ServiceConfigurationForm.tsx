@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { getDefaultConfigurationsApiV1UserConfigurationsDefaultsGet } from '@/client/sdk.gen';
+import { RealtimeVoicePreviewButton } from "@/components/RealtimeVoicePreviewButton";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -678,10 +679,31 @@ export function ServiceConfigurationForm({
         );
     };
 
+    // Realtime voices have no hosted preview catalog — pair the voice control
+    // with a button that synthesizes a short sample via the backend.
+    const withRealtimeVoicePreview = (
+        service: ServiceSegment,
+        field: string,
+        control: React.ReactNode,
+    ) => {
+        if (service !== "realtime" || field !== "voice") return control;
+        return (
+            <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">{control}</div>
+                <RealtimeVoicePreviewButton
+                    provider={serviceProviders.realtime}
+                    voice={(watch("realtime_voice") as string) || ""}
+                    language={(watch("realtime_language") as string) || undefined}
+                    model={(watch("realtime_model") as string) || undefined}
+                />
+            </div>
+        );
+    };
+
     const renderField = (service: ServiceSegment, field: string, providerSchema: ProviderSchema) => {
         return (
             <>
-                {renderFieldInput(service, field, providerSchema)}
+                {withRealtimeVoicePreview(service, field, renderFieldInput(service, field, providerSchema))}
                 {renderFieldDescription(field, providerSchema)}
             </>
         );

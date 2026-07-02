@@ -22,6 +22,7 @@ from api.services.configuration.defaults import DEFAULT_SERVICE_PROVIDERS
 from api.services.configuration.masking import check_for_masked_keys, mask_user_config
 from api.services.configuration.merge import merge_user_configurations
 from api.services.configuration.registry import REGISTRY, ServiceType
+from api.services.configuration.voice_preview import get_realtime_voice_preview
 from api.services.mps_service_key_client import mps_service_key_client
 from api.services.organization_preferences import (
     get_organization_preferences,
@@ -418,6 +419,34 @@ class VoicesResponse(BaseModel):
     provider: str
     voices: List[VoiceInfo]
     facets: Optional[VoiceFacets] = None
+
+
+class RealtimeVoicePreviewResponse(BaseModel):
+    url: str
+    cached: bool
+
+
+# NOTE: registered before the dynamic /configurations/voices/{provider} route
+# below so "realtime-preview" is matched here instead of being captured (and
+# rejected) as a provider path parameter.
+@router.get("/configurations/voices/realtime-preview")
+async def get_realtime_voice_preview_route(
+    provider: str,
+    voice: str,
+    language: Optional[str] = None,
+    model: Optional[str] = None,
+    user: UserModel = Depends(get_user),
+) -> RealtimeVoicePreviewResponse:
+    """Synthesize (or fetch a cached) short sample for a realtime voice."""
+    result = await get_realtime_voice_preview(
+        user_id=user.id,
+        organization_id=user.selected_organization_id,
+        provider=provider,
+        voice=voice,
+        language=language,
+        model=model,
+    )
+    return RealtimeVoicePreviewResponse(**result)
 
 
 @router.get("/configurations/voices/{provider}")

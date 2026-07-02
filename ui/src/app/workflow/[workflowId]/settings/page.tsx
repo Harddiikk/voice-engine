@@ -1,7 +1,7 @@
 "use client";
 
 import { format } from "date-fns";
-import { ArrowLeft, BookA, Brain, CalendarIcon, Clipboard, Download, ExternalLink, FileDown, Fingerprint, Loader2, Mic, Pause, PhoneOff, Play, Rocket, Settings, Trash2Icon, Upload, Variable, X } from "lucide-react";
+import { ArrowLeft, BookA, Brain, CalendarIcon, Clipboard, Download, ExternalLink, FileDown, Fingerprint, Loader2, Mic, Pause, PhoneOff, Play, Rocket, Settings, Trash2Icon, Upload, Variable, Volume2, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -37,6 +37,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+    deriveVoiceTargetFromEffective,
+    deriveVoiceTargetFromV2,
+    VoiceLanguagePicker,
+    voicePickOptions,
+    type VoicePickTarget,
+} from "@/components/VoiceLanguagePicker";
 import { SETTINGS_DOCUMENTATION_URLS } from "@/constants/documentation";
 import { UnsavedChangesProvider, useUnsavedChanges, useUnsavedChangesContext } from "@/context/UnsavedChangesContext";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
@@ -90,6 +97,7 @@ Respond with ONLY "CONVERSATION" if a person answered, or "VOICEMAIL" if it's vo
 // Sidebar navigation items
 const NAV_ITEMS = [
     { id: "general", label: "General", icon: Settings },
+    { id: "voice", label: "Voice", icon: Volume2 },
     { id: "models", label: "Model Overrides", icon: Brain },
     { id: "variables", label: "Template Variables", icon: Variable },
     { id: "dictionary", label: "Dictionary", icon: BookA },
@@ -1057,6 +1065,187 @@ function AgentUuidSection({ workflowUuid }: { workflowUuid: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Section: Voice (per-agent voice pick — visible to all users)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve which service the voice pick applies to: a workflow-level full v2
+ * override wins over the organization's effective configuration — mirroring
+ * the backend resolution in get_effective_ai_model_configuration_for_workflow.
+ */
+function deriveVoicePickTarget(
+    workflowConfigurations: WorkflowConfigurations,
+    organizationModelConfiguration: OrganizationAiModelConfigurationResponse | null,
+): VoicePickTarget | null {
+    const v2Override = workflowConfigurations.model_configuration_v2_override;
+    if (v2Override) {
+        return deriveVoiceTargetFromV2(v2Override as unknown as Record<string, unknown>);
+    }
+    return deriveVoiceTargetFromEffective(
+        organizationModelConfiguration?.effective_configuration as
+            | Record<string, unknown>
+            | null
+            | undefined,
+    );
+}
+
+function WorkflowVoiceSection({
+    workflowConfigurations,
+    workflowName,
+    onSave,
+    modelConfigurationDefaults,
+    organizationModelConfiguration,
+    modelConfigurationLoading,
+    modelConfigurationError,
+}: {
+    workflowConfigurations: WorkflowConfigurations;
+    workflowName: string;
+    onSave: (configurations: WorkflowConfigurations, workflowName: string) => Promise<void>;
+    modelConfigurationDefaults: ModelConfigurationDefaultsV2 | null;
+    organizationModelConfiguration: OrganizationAiModelConfigurationResponse | null;
+    modelConfigurationLoading: boolean;
+    modelConfigurationError: string | null;
+}) {
+    const savedOverride = workflowConfigurations.model_voice_override;
+    const target = useMemo(
+        () => deriveVoicePickTarget(workflowConfigurations, organizationModelConfiguration),
+        [workflowConfigurations, organizationModelConfiguration],
+    );
+
+    const baseVoice = target?.baseVoice ?? "";
+    const baseLanguage = target?.baseLanguage ?? "";
+    const savedVoice = savedOverride?.voice || baseVoice;
+    const savedLanguage = savedOverride?.language || baseLanguage;
+
+    const [draftVoice, setDraftVoice] = useState(savedVoice);
+    const [draftLanguage, setDraftLanguage] = useState(savedLanguage);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        setDraftVoice(savedVoice);
+        setDraftLanguage(savedLanguage);
+    }, [savedVoice, savedLanguage]);
+
+    const isDirty = draftVoice !== savedVoice || draftLanguage !== savedLanguage;
+    useUnsavedChanges("voice", isDirty);
+
+    const options = useMemo(
+        () => voicePickOptions(modelConfigurationDefaults, target),
+        [modelConfigurationDefaults, target],
+    );
+
+    const handleSave = async () => {
+        if (!draftVoice.trim()) {
+            toast.error("Pick a voice first");
+            return;
+        }
+        setIsSaving(true);
+        try {
+            const next: WorkflowConfigurations = {
+                ...workflowConfigurations,
+                model_voice_override: {
+                    voice: draftVoice.trim(),
+                    ...(draftLanguage.trim() ? { language: draftLanguage.trim() } : {}),
+                },
+            };
+            await onSave(next, workflowName);
+            toast.success("Voice saved for this agent");
+        } catch (err) {
+            toast.error(err instanceof Error && err.message ? err.message : detailFromError(err, "Failed to save voice"));
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleReset = async () => {
+        setIsSaving(true);
+        try {
+            const next: WorkflowConfigurations = { ...workflowConfigurations };
+            delete next.model_voice_override;
+            await onSave(next, workflowName);
+            setDraftVoice(baseVoice);
+            setDraftLanguage(baseLanguage);
+            toast.success("Using the organization default voice");
+        } catch (err) {
+            toast.error(err instanceof Error && err.message ? err.message : detailFromError(err, "Failed to reset voice"));
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <Card id="voice">
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                    <Volume2 className="h-4 w-4" />
+                    Voice
+                </CardTitle>
+                <CardDescription>
+                    Pick the voice (and language) this agent speaks with. Other agents keep the
+                    organization default.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {modelConfigurationLoading && (
+                    <div className="flex items-center gap-2 rounded-md border p-4 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading model configuration
+                    </div>
+                )}
+
+                {modelConfigurationError && (
+                    <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                        {modelConfigurationError}
+                    </div>
+                )}
+
+                {!modelConfigurationLoading && !modelConfigurationError && !target && (
+                    <p className="rounded-md border bg-muted/20 p-4 text-sm text-muted-foreground">
+                        Voice selection needs a configured model. Ask your administrator to set up
+                        the model configuration first.
+                    </p>
+                )}
+
+                {!modelConfigurationLoading && !modelConfigurationError && target && (
+                    <>
+                        <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                            <span className="text-muted-foreground">Current voice:</span>{" "}
+                            <span className="font-medium">{savedVoice || "not set"}</span>{" "}
+                            <span className="text-xs text-muted-foreground">
+                                {savedOverride?.voice ? "(this agent)" : "(organization default)"}
+                            </span>
+                        </div>
+                        <VoiceLanguagePicker
+                            isRealtime={target.isRealtime}
+                            provider={target.provider}
+                            model={target.model}
+                            voice={draftVoice}
+                            language={draftLanguage}
+                            voiceOptions={options.voices}
+                            languageOptions={options.languages}
+                            onVoiceChange={setDraftVoice}
+                            onLanguageChange={setDraftLanguage}
+                            disabled={isSaving}
+                        />
+                    </>
+                )}
+            </CardContent>
+            <CardFooter className="justify-end gap-3 border-t pt-6">
+                {isDirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
+                {savedOverride?.voice && (
+                    <Button variant="outline" onClick={handleReset} disabled={isSaving}>
+                        Use Organization Default
+                    </Button>
+                )}
+                <Button onClick={handleSave} disabled={isSaving || !isDirty || !target}>
+                    {isSaving ? "Saving..." : "Save Voice"}
+                </Button>
+            </CardFooter>
+        </Card>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Section: Model Overrides
 // ---------------------------------------------------------------------------
 
@@ -1445,6 +1634,17 @@ function WorkflowSettingsInner({
                                 workflowName={workflowName || workflow.name}
                                 workflowId={workflowId}
                                 onSave={saveWorkflowConfigurations}
+                            />
+
+                            {/* Voice — per-agent voice pick, visible to ALL users */}
+                            <WorkflowVoiceSection
+                                workflowConfigurations={workflowConfigurations}
+                                workflowName={workflowName || workflow.name}
+                                onSave={saveWorkflowConfigurations}
+                                modelConfigurationDefaults={modelConfigurationDefaults}
+                                organizationModelConfiguration={organizationModelConfiguration}
+                                modelConfigurationLoading={modelConfigurationLoading}
+                                modelConfigurationError={modelConfigurationError}
                             />
 
                             {/* Model Overrides — admin-only (provider/API key configuration) */}

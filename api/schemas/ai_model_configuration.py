@@ -49,6 +49,34 @@ class EffectiveAIModelConfiguration(BaseModel):
         return data
 
 
+class WorkflowModelVoiceOverride(BaseModel):
+    """Per-workflow voice pick stored under ``model_voice_override``.
+
+    Layers onto whatever configuration a workflow resolves to (org v2,
+    legacy v1, or a full workflow v2 override): realtime configs get
+    ``realtime.voice``/``realtime.language``, pipeline configs get
+    ``tts.voice``/``stt.language``.
+    """
+
+    voice: str = Field(min_length=1)
+    language: str | None = None
+
+    @field_validator("voice")
+    @classmethod
+    def validate_voice(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("voice must not be blank")
+        return value.strip()
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
 class DograhManagedAIModelConfiguration(BaseModel):
     # A list means multiple managed MPS keys (e.g. rotation); downstream
     # registry configs accept str | list[str] natively.

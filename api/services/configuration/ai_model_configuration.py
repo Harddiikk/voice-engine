@@ -24,6 +24,7 @@ from api.schemas.ai_model_configuration import (
     DograhManagedAIModelConfiguration,
     EffectiveAIModelConfiguration,
     OrganizationAIModelConfigurationV2,
+    WorkflowModelVoiceOverride,
     compile_ai_model_configuration_v2,
 )
 from api.services.configuration.masking import (
@@ -38,6 +39,7 @@ from api.services.configuration.resolve import resolve_effective_config
 
 AIModelConfigurationSource = Literal["organization_v2", "legacy_user_v1", "empty"]
 WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY = "model_configuration_v2_override"
+WORKFLOW_MODEL_VOICE_OVERRIDE_KEY = "model_voice_override"
 
 
 @dataclass
@@ -101,22 +103,93 @@ async def get_effective_ai_model_configuration_for_workflow(
     workflow_configurations: dict | None,
 ) -> EffectiveAIModelConfiguration:
     workflow_configurations = workflow_configurations or {}
+    # The per-workflow voice pick layers on LAST so it wins over every
+    # resolution branch, including a full workflow-level v2 override.
+    voice_override = workflow_configurations.get(WORKFLOW_MODEL_VOICE_OVERRIDE_KEY)
     v2_override = workflow_configurations.get(
         WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY
     )
     if v2_override:
-        return compile_ai_model_configuration_v2(
+        effective = compile_ai_model_configuration_v2(
             OrganizationAIModelConfigurationV2.model_validate(v2_override)
         )
+        return apply_model_voice_override(effective, voice_override)
 
     resolved_config = await get_resolved_ai_model_configuration(
         user_id=user_id,
         organization_id=organization_id,
     )
-    return resolve_effective_config(
+    effective = resolve_effective_config(
         resolved_config.effective,
         workflow_configurations.get("model_overrides"),
     )
+    return apply_model_voice_override(effective, voice_override)
+
+
+def apply_model_voice_override(
+    effective: EffectiveAIModelConfiguration,
+    override: dict | None,
+) -> EffectiveAIModelConfiguration:
+    """Patch a per-workflow voice (and optional language) onto an effective config.
+
+    Pure function: no-op on a falsy/blank override, never mutates ``effective``.
+    Realtime configs get ``realtime.voice`` (+``realtime.language``); pipeline
+    configs get ``tts.voice`` (+``stt.language``). Fields the target service
+    does not declare are skipped rather than injected.
+    """
+    if not override or not isinstance(override, dict):
+        return effective
+    voice = override.get("voice")
+    if not isinstance(voice, str) or not voice.strip():
+        return effective
+    voice = voice.strip()
+    language = override.get("language")
+    language = language.strip() if isinstance(language, str) and language.strip() else None
+
+    if effective.is_realtime and effective.realtime is not None:
+        updates: dict = {"voice": voice}
+        if language and "language" in type(effective.realtime).model_fields:
+            updates["language"] = language
+        return effective.model_copy(
+            update={"realtime": effective.realtime.model_copy(update=updates)}
+        )
+
+    section_updates: dict = {}
+    if effective.tts is not None and "voice" in type(effective.tts).model_fields:
+        section_updates["tts"] = effective.tts.model_copy(update={"voice": voice})
+    if (
+        language
+        and effective.stt is not None
+        and "language" in type(effective.stt).model_fields
+    ):
+        section_updates["stt"] = effective.stt.model_copy(
+            update={"language": language}
+        )
+    if not section_updates:
+        return effective
+    return effective.model_copy(update=section_updates)
+
+
+def normalize_workflow_model_voice_override(workflow_configurations: dict) -> dict:
+    """Validate/normalize the ``model_voice_override`` key of a configurations dict.
+
+    Returns a shallow copy. An empty payload or blank voice means "remove the
+    override" — the key is popped. Structurally invalid payloads raise
+    ``pydantic.ValidationError`` (routes map that to a 422).
+    """
+    if WORKFLOW_MODEL_VOICE_OVERRIDE_KEY not in workflow_configurations:
+        return workflow_configurations
+    normalized = {**workflow_configurations}
+    raw = normalized[WORKFLOW_MODEL_VOICE_OVERRIDE_KEY]
+    raw_voice = raw.get("voice") if isinstance(raw, dict) else None
+    if not raw or not str(raw_voice or "").strip():
+        normalized.pop(WORKFLOW_MODEL_VOICE_OVERRIDE_KEY, None)
+        return normalized
+    override = WorkflowModelVoiceOverride.model_validate(raw)
+    normalized[WORKFLOW_MODEL_VOICE_OVERRIDE_KEY] = override.model_dump(
+        exclude_none=True
+    )
+    return normalized
 
 
 async def get_organization_ai_model_configuration_v2_state(

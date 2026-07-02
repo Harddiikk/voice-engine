@@ -22,11 +22,13 @@ from api.sdk_expose import sdk_expose
 from api.services.auth.depends import get_user
 from api.services.configuration.ai_model_configuration import (
     WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY,
+    WORKFLOW_MODEL_VOICE_OVERRIDE_KEY,
     check_for_masked_keys_in_ai_model_configuration_v2,
     compile_ai_model_configuration_v2,
     convert_legacy_ai_model_configuration_to_v2,
     get_resolved_ai_model_configuration,
     merge_ai_model_configuration_v2_secrets,
+    normalize_workflow_model_voice_override,
 )
 from api.services.configuration.check_validity import UserConfigurationValidator
 from api.services.configuration.masking import (
@@ -1169,6 +1171,19 @@ async def update_workflow(
                     **workflow_configurations,
                     "model_overrides": enriched_overrides,
                 }
+
+        # Validate the per-workflow voice pick. An empty payload or blank
+        # voice means "clear the override" — the key is dropped.
+        if (
+            workflow_configurations
+            and WORKFLOW_MODEL_VOICE_OVERRIDE_KEY in workflow_configurations
+        ):
+            try:
+                workflow_configurations = normalize_workflow_model_voice_override(
+                    workflow_configurations
+                )
+            except ValidationError as e:
+                raise HTTPException(status_code=422, detail=str(e))
 
         # Reject upfront if any new trigger path collides with another
         # workflow's trigger — keeps the workflow record from

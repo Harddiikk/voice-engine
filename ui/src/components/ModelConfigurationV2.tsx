@@ -1,7 +1,8 @@
 "use client";
 
-import { ExternalLink, RefreshCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ExternalLink, RefreshCw, Volume2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import {
     getModelConfigurationV2ApiV1OrganizationsModelConfigurationsV2Get,
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import {
     Dialog,
     DialogContent,
@@ -34,11 +36,157 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+    deriveVoiceTargetFromV2,
+    VoiceLanguagePicker,
+    voicePickOptions,
+} from "@/components/VoiceLanguagePicker";
 import { useUserConfig } from "@/context/UserConfigContext";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
 import { getModelConfigurationV2Raw } from "@/lib/modelConfigRaw";
+
+/**
+ * Swap voice/language into a (masked) v2 configuration without touching
+ * anything else. The backend restores masked secrets on save
+ * (merge_ai_model_configuration_v2_secrets), so the masked api_key values
+ * round-trip safely.
+ */
+function deepSwapVoiceLanguage(
+    configuration: Record<string, unknown>,
+    voice: string,
+    language: string,
+): OrganizationAiModelConfigurationV2 {
+    const next = structuredClone(configuration);
+    if (next.mode === "dograh") {
+        const dograh = next.dograh as Record<string, unknown> | null | undefined;
+        if (dograh) {
+            dograh.voice = voice;
+            if (language) dograh.language = language;
+        }
+        return next as unknown as OrganizationAiModelConfigurationV2;
+    }
+    const byok = next.byok as Record<string, unknown> | null | undefined;
+    if (byok?.mode === "realtime") {
+        const realtime = (byok.realtime as Record<string, unknown> | undefined)
+            ?.realtime as Record<string, unknown> | undefined;
+        if (realtime) {
+            realtime.voice = voice;
+            // Only providers that declare a language field accept one.
+            if (language && "language" in realtime) realtime.language = language;
+        }
+    } else if (byok?.mode === "pipeline") {
+        const pipeline = byok.pipeline as Record<string, unknown> | undefined;
+        const tts = pipeline?.tts as Record<string, unknown> | undefined;
+        const stt = pipeline?.stt as Record<string, unknown> | undefined;
+        if (tts) tts.voice = voice;
+        if (language && stt && "language" in stt) stt.language = language;
+    }
+    return next as unknown as OrganizationAiModelConfigurationV2;
+}
+
+/**
+ * Trimmed non-admin Models view for v2 orgs: a Voice & Language card. All
+ * provider/model/API-key surfaces stay admin-only.
+ */
+function ClientVoiceLanguageCard({
+    defaults,
+    response,
+    onSave,
+}: {
+    defaults: ModelConfigurationDefaultsV2;
+    response: OrganizationAiModelConfigurationResponse;
+    onSave: (configuration: OrganizationAiModelConfigurationV2) => Promise<void>;
+}) {
+    const configuration = (response.configuration ?? null) as Record<string, unknown> | null;
+    const target = useMemo(() => deriveVoiceTargetFromV2(configuration), [configuration]);
+    const options = useMemo(() => voicePickOptions(defaults, target), [defaults, target]);
+
+    const baseVoice = target?.baseVoice ?? "";
+    const baseLanguage = target?.baseLanguage ?? "";
+    const [draftVoice, setDraftVoice] = useState(baseVoice);
+    const [draftLanguage, setDraftLanguage] = useState(baseLanguage);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        setDraftVoice(baseVoice);
+        setDraftLanguage(baseLanguage);
+    }, [baseVoice, baseLanguage]);
+
+    if (!configuration || !target) {
+        return <ManagedByAdminCard />;
+    }
+
+    const isDirty = draftVoice !== baseVoice || draftLanguage !== baseLanguage;
+
+    const handleSave = async () => {
+        if (!draftVoice.trim()) {
+            toast.error("Pick a voice first");
+            return;
+        }
+        setIsSaving(true);
+        try {
+            await onSave(
+                deepSwapVoiceLanguage(configuration, draftVoice.trim(), draftLanguage.trim()),
+            );
+            toast.success("Voice saved");
+        } catch (err) {
+            toast.error(err instanceof Error && err.message ? err.message : "Failed to save voice");
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                    <Volume2 className="h-4 w-4" />
+                    Voice &amp; Language
+                </CardTitle>
+                <CardDescription>
+                    Choose the voice your agents speak with. Model, provider, and API-key
+                    settings are managed by your administrator.
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <VoiceLanguagePicker
+                    isRealtime={target.isRealtime}
+                    provider={target.provider}
+                    model={target.model}
+                    voice={draftVoice}
+                    language={draftLanguage}
+                    voiceOptions={options.voices}
+                    languageOptions={options.languages}
+                    onVoiceChange={setDraftVoice}
+                    onLanguageChange={setDraftLanguage}
+                    disabled={isSaving}
+                />
+            </CardContent>
+            <CardFooter className="justify-end gap-3 border-t pt-6">
+                {isDirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
+                <Button onClick={handleSave} disabled={isSaving || !isDirty || !draftVoice.trim()}>
+                    {isSaving ? "Saving..." : "Save Voice"}
+                </Button>
+            </CardFooter>
+        </Card>
+    );
+}
+
+function ManagedByAdminCard() {
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="text-base">Model setup is managed by your administrator</CardTitle>
+                <CardDescription>
+                    Your organization&apos;s AI model configuration is handled centrally.
+                    Contact your administrator to change models or voices.
+                </CardDescription>
+            </CardHeader>
+        </Card>
+    );
+}
 
 export default function ModelConfigurationV2({
     docsUrl,
@@ -49,7 +197,7 @@ export default function ModelConfigurationV2({
 }) {
     const auth = useAuth();
     const { refreshConfig, saveUserConfig } = useUserConfig();
-    const { isAdmin } = useIsAdmin();
+    const { isAdmin, isLoaded: adminLoaded } = useIsAdmin();
     const hasFetched = useRef(false);
     const hasAppliedInitialMigrationAction = useRef(false);
 
@@ -238,7 +386,7 @@ export default function ModelConfigurationV2({
         </AlertDialog>
     );
 
-    if (loading) {
+    if (loading || !adminLoaded) {
         return (
             <div className="w-full max-w-4xl mx-auto space-y-6">
                 <Skeleton className="h-10 w-80" />
@@ -249,6 +397,49 @@ export default function ModelConfigurationV2({
     }
 
     const source = response?.source || "empty";
+
+    // Non-admins never see provider/model/API-key surfaces: v2 orgs get a
+    // voice picker that deep-swaps into the masked configuration; everything
+    // else is informational.
+    if (!isAdmin) {
+        return (
+            <div className="w-full max-w-4xl mx-auto space-y-6">
+                <div>
+                    <h1 className="text-3xl font-bold">AI Models Configuration</h1>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                        Voice settings for your organization&apos;s agents.{" "}
+                        {docsUrl && (
+                            <a href={docsUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline">
+                                Learn more <ExternalLink className="h-3 w-3" />
+                            </a>
+                        )}
+                    </p>
+                </div>
+
+                {invalidConfigurationBanner}
+                {error && (
+                    <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                        {error}
+                    </div>
+                )}
+                {notice && (
+                    <div className="rounded-md border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-green-700 dark:text-green-300">
+                        {notice}
+                    </div>
+                )}
+
+                {source === "organization_v2" && defaults && response ? (
+                    <ClientVoiceLanguageCard
+                        defaults={defaults}
+                        response={response}
+                        onSave={saveConfiguration}
+                    />
+                ) : (
+                    <ManagedByAdminCard />
+                )}
+            </div>
+        );
+    }
 
     if (source !== "organization_v2") {
         return (
