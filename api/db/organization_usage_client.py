@@ -33,6 +33,12 @@ from api.utils.recording_artifacts import get_recording_storage_key
 # excluded from the success/(success+failed) denominator.
 SUCCESS_DISPOSITIONS = frozenset(
     {
+        # This app's real EndTaskReason vocabulary (pipecat.utils.enums):
+        "user_qualified",  # the lead qualified — the goal of an outbound campaign
+        "call_transferred",
+        "transfer_call",
+        "end_call_tool",  # the agent completed its flow and ended the call
+        # Generic taxonomy (other integrations / future dispositions):
         "completed",
         "answered",
         "interested",
@@ -51,6 +57,14 @@ SUCCESS_DISPOSITIONS = frozenset(
 )
 FAILURE_DISPOSITIONS = frozenset(
     {
+        # Real EndTaskReason values that mean the call didn't reach/complete:
+        "voicemail_detected",
+        "user_idle_max_duration_exceeded",
+        "system_cancelled",
+        "system_connect_error",
+        "unexpected_error",
+        "pipeline_error",
+        # Generic taxonomy:
         "failed",
         "failure",
         "busy",
@@ -58,7 +72,6 @@ FAILURE_DISPOSITIONS = frozenset(
         "no_answer",
         "noanswer",
         "voicemail",
-        "voicemail_detected",
         "error",
         "canceled",
         "cancelled",
@@ -69,6 +82,10 @@ FAILURE_DISPOSITIONS = frozenset(
         "rejected",
     }
 )
+# NOTE on neutral buckets: user_hangup, user_disqualified, call_duration_exceeded
+# and unknown are deliberately "other" — the call connected and the system worked,
+# but it neither hit the goal nor failed technically. They're excluded from the
+# success/(success+failed) denominator so the success rate reflects real outcomes.
 
 # Trend windowing per period: (date_trunc granularity, number of buckets).
 _OVERVIEW_PERIODS = {

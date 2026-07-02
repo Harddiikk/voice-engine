@@ -202,6 +202,22 @@ def test_classify_disposition_buckets():
     assert classify_disposition("some_custom_code") == "other"
 
 
+def test_classify_real_endtaskreason_dispositions():
+    """The app's real EndTaskReason vocabulary must map sensibly — otherwise a
+    campaign full of `user_qualified` calls shows 0% success (looks broken)."""
+    assert classify_disposition("user_qualified") == "success"
+    assert classify_disposition("call_transferred") == "success"
+    assert classify_disposition("end_call_tool") == "success"
+    assert classify_disposition("voicemail_detected") == "failed"
+    assert classify_disposition("user_idle_max_duration_exceeded") == "failed"
+    assert classify_disposition("system_connect_error") == "failed"
+    assert classify_disposition("pipeline_error") == "failed"
+    # Neutral: connected + system worked, but neither goal-hit nor tech-failure.
+    assert classify_disposition("user_hangup") == "other"
+    assert classify_disposition("user_disqualified") == "other"
+    assert classify_disposition("call_duration_exceeded") == "other"
+
+
 # ======================================================================
 # Campaign spend (authoritative completed-run duration SUM)
 # ======================================================================
