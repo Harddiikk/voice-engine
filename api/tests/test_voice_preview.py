@@ -190,7 +190,7 @@ async def test_google_miss_generates_wav_and_stores_it(patch_env):
     assert key == (
         "voice-previews/google_realtime/gemini-3.1-flash-live-preview/Aoede/hi.wav"
     )
-    wav_bytes = content.read()
+    wav_bytes = await content.read()
     assert wav_bytes.startswith(b"RIFF")
     assert wav_bytes[8:12] == b"WAVE"
     with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
@@ -344,7 +344,7 @@ async def test_openai_preview_posts_speech_request(patch_env):
     }
     key, content = storage.acreate_file.await_args.args
     assert key == "voice-previews/openai_realtime/gpt-realtime-2/verse/en.wav"
-    assert content.read() == wav_content
+    assert await content.read() == wav_content
 
 
 def test_cache_key_sanitizes_unsafe_characters():

@@ -36,6 +36,18 @@ PREVIEW_TEXTS: dict[str, str] = {
 
 SIGNED_URL_EXPIRY_SECONDS = 3600
 
+
+class _AsyncBytes:
+    """Adapt in-memory bytes to the async ``read()`` contract that
+    ``storage_fs.acreate_file`` expects (it awaits ``content.read()``, so a
+    plain ``BytesIO`` — whose ``read()`` is synchronous — cannot be used)."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def read(self) -> bytes:
+        return self._data
+
 # Gemini Live models cannot do one-shot TTS over REST, so previews use the
 # dedicated Gemini TTS preview model with the same prebuilt voice names.
 _GEMINI_TTS_URL = (
@@ -155,7 +167,7 @@ async def get_realtime_voice_preview(
             detail=f"Voice preview is not available for {provider}",
         )
 
-    created = await storage_fs.acreate_file(cache_key, io.BytesIO(wav_bytes))
+    created = await storage_fs.acreate_file(cache_key, _AsyncBytes(wav_bytes))
     if not created:
         logger.error(f"Failed to store voice preview at {cache_key}")
         raise HTTPException(status_code=502, detail="Preview generation failed")
