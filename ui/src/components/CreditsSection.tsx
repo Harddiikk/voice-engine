@@ -27,7 +27,36 @@ interface Balance {
   packs: Pack[];
   plan?: string;
   features?: PackFeatures;
+  // Sum of active per-call reservations (each live call briefly holds up to
+  // 10 credits; the unused part returns when the call settles).
+  on_hold_seconds?: number;
 }
+
+interface LedgerEntry {
+  id: number;
+  kind: string;
+  delta_seconds: number;
+  balance_after: number | null;
+  description: string | null;
+  workflow_run_id: number | null;
+  created_at: string;
+}
+
+// reserve/release pairs are bookkeeping noise for most users — the net
+// "settle_charge" row is the real story of a call. Hidden behind a toggle.
+const HOLD_KINDS = new Set(["reserve", "settle_release"]);
+
+const KIND_LABELS: Record<string, string> = {
+  reserve: "Hold",
+  settle_release: "Hold released",
+  settle_charge: "Call",
+  topup: "Top-up",
+  grant: "Granted",
+  number_purchase: "Number purchase",
+  refund: "Refund",
+  adjustment: "Adjustment",
+  leak_sweep: "Hold recovered",
+};
 
 // PayU Hosted Checkout is a redirect flow: the backend returns the PayU payment
 // URL + a server-signed set of form fields, we auto-POST them, and PayU redirects
@@ -52,6 +81,8 @@ export function CreditsSection() {
   const { user, loading: authLoading } = useAuth();
   const { openEnterprise } = useLeadForms();
   const [data, setData] = useState<Balance | null>(null);
+  const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
+  const [showHolds, setShowHolds] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const hasFetched = useRef(false);
 
@@ -79,6 +110,12 @@ export function CreditsSection() {
       setData(res.data as Balance);
     } catch {
       /* ignore */
+    }
+    try {
+      const res = await client.get({ url: "/api/v1/billing/ledger?limit=100" });
+      if (Array.isArray(res.data)) setLedger(res.data as LedgerEntry[]);
+    } catch {
+      /* ledger is additive UI — never block the balance on it */
     }
   }
 
@@ -130,6 +167,13 @@ export function CreditsSection() {
         {!data.unlimited && (
           <p className="mt-1 text-xs text-muted-foreground">
             1 credit = 1 minute of calling.
+          </p>
+        )}
+        {!data.unlimited && (data.on_hold_seconds ?? 0) > 0 && (
+          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+            On hold: {(Math.round(((data.on_hold_seconds ?? 0) / 60) * 10) / 10).toLocaleString()}{" "}
+            credits — each active call briefly holds up to 10 credits; the
+            unused part returns when the call ends.
           </p>
         )}
       </div>
@@ -231,6 +275,65 @@ export function CreditsSection() {
           </Button>
         </div>
       </div>
+
+      {/* Billing history — every credit movement, newest first. Hold/release
+          bookkeeping pairs are collapsed behind a toggle; the net per-call
+          charge row is what most users want to see. */}
+      {!data.unlimited && ledger !== null && (
+        <div className="rounded-md border p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold">Billing history</p>
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              onClick={() => setShowHolds((v) => !v)}
+            >
+              {showHolds ? "Hide holds" : "Show holds"}
+            </button>
+          </div>
+          {ledger.length === 0 ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              No billing activity yet — calls, top-ups, and number purchases
+              will appear here.
+            </p>
+          ) : (
+            <ul className="mt-3 divide-y">
+              {ledger
+                .filter((e) => showHolds || !HOLD_KINDS.has(e.kind))
+                .map((e) => {
+                  const credits = Math.round((e.delta_seconds / 60) * 10) / 10;
+                  const positive = e.delta_seconds > 0;
+                  return (
+                    <li
+                      key={e.id}
+                      className="flex items-center justify-between gap-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm">
+                          {e.description || KIND_LABELS[e.kind] || e.kind}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {KIND_LABELS[e.kind] || e.kind} ·{" "}
+                          {new Date(e.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <span
+                        className={`shrink-0 text-sm font-medium tabular ${
+                          positive
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {positive ? "+" : ""}
+                        {credits.toLocaleString()} credits
+                      </span>
+                    </li>
+                  );
+                })}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
