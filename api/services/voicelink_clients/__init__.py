@@ -1,10 +1,12 @@
 """VoiceLink reseller client-management service.
 
 Creates VoiceLink "clients" (sub-accounts under our reseller account) via
-``POST /v1/reseller/client/create``. Provisioning runs best-effort at
-local-auth signup and can be retried from the admin Clients view; the
-outcome is stored on the organization (``voicelink_client_id`` /
-``voicelink_username`` / ``voicelink_status`` / ``voicelink_error``).
+``POST /v1/reseller/client/create``. Signup only stashes an encrypted copy
+of the platform password (``stash_voicelink_signup_secret``); the client is
+provisioned lazily by ``ensure_voicelink_client`` at first need (KYC entry,
+number purchase) or from the admin Clients view. The outcome is stored on
+the organization (``voicelink_client_id`` / ``voicelink_username`` /
+``voicelink_status`` / ``voicelink_error``).
 """
 
 from .client import (
@@ -17,9 +19,9 @@ from .service import (
     ensure_voicelink_client,
     generate_client_password,
     provision_voicelink_client,
-    provision_voicelink_client_for_signup,
     resolve_org_owner,
     split_signup_name,
+    stash_voicelink_signup_secret,
 )
 
 __all__ = [
@@ -30,7 +32,7 @@ __all__ = [
     "ensure_voicelink_client",
     "generate_client_password",
     "provision_voicelink_client",
-    "provision_voicelink_client_for_signup",
     "resolve_org_owner",
     "split_signup_name",
+    "stash_voicelink_signup_secret",
 ]

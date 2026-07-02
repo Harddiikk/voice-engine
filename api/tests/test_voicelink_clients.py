@@ -18,9 +18,9 @@ from api.services.voicelink_clients import (
     ensure_voicelink_client,
     generate_client_password,
     provision_voicelink_client,
-    provision_voicelink_client_for_signup,
     resolve_org_owner,
     split_signup_name,
+    stash_voicelink_signup_secret,
 )
 from api.services.voicelink_clients.secrets import decrypt_provision_secret
 
@@ -336,11 +336,11 @@ async def test_list_clients_raises_on_upstream_failure():
             await client.list_clients()
 
 
-# ======== SIGNUP HOOK ========
+# ======== SIGNUP HOOK (stash secret only — provisioning is lazy) ========
 
 
 @pytest.mark.asyncio
-async def test_signup_hook_skips_admin_emails():
+async def test_signup_stash_skips_admin_emails():
     # Admin/owner orgs are never VoiceLink clients — no provision, no secret.
     with (
         patch(
@@ -354,7 +354,7 @@ async def test_signup_hook_skips_admin_emails():
         patch("api.services.voicelink_clients.service.db_client") as db,
     ):
         db.update_organization_voicelink = AsyncMock()
-        await provision_voicelink_client_for_signup(
+        await stash_voicelink_signup_secret(
             organization_id=11,
             email="owner@example.test",
             password="placeholder-pass",
@@ -365,15 +365,11 @@ async def test_signup_hook_skips_admin_emails():
 
 
 @pytest.mark.asyncio
-async def test_signup_hook_stores_secret_when_reseller_creds_unset(monkeypatch):
-    # Creds-unset skip still records the encrypted password so a later admin
-    # "Create client" (once creds are set) can reuse the same platform password.
+async def test_signup_stash_stores_secret_and_never_provisions(monkeypatch):
+    # Signup must NOT create a VoiceLink client (lazy provisioning does that
+    # later) — only the encrypted platform password is stored.
     monkeypatch.setenv("VOICELINK_PROVISION_KEY", _PROVISION_KEY)
     with (
-        patch(
-            "api.services.voicelink_clients.service.get_voicelink_clients_client",
-            return_value=_client(username="", password=""),
-        ),
         patch(
             "api.services.voicelink_clients.service.provision_voicelink_client",
             new_callable=AsyncMock,
@@ -381,41 +377,49 @@ async def test_signup_hook_stores_secret_when_reseller_creds_unset(monkeypatch):
         patch("api.services.voicelink_clients.service.db_client") as db,
     ):
         db.update_organization_voicelink = AsyncMock()
-        await provision_voicelink_client_for_signup(
+        await stash_voicelink_signup_secret(
             organization_id=11,
             email="user@example.test",
             password="platform-pass-xyz",
         )
 
     provision.assert_not_awaited()
-    secret = db.update_organization_voicelink.await_args.kwargs["provision_secret"]
-    assert decrypt_provision_secret(secret) == "platform-pass-xyz"
+    update = db.update_organization_voicelink.await_args
+    assert update.args == (11,)
+    # ONLY the secret is written — no status/client_id churn at signup.
+    assert set(update.kwargs) == {"provision_secret"}
+    assert decrypt_provision_secret(update.kwargs["provision_secret"]) == (
+        "platform-pass-xyz"
+    )
 
 
 @pytest.mark.asyncio
-async def test_signup_hook_never_raises_and_records_pending():
-    with (
-        patch(
-            "api.services.voicelink_clients.service.get_voicelink_clients_client",
-            return_value=_client(),
-        ),
-        patch(
-            "api.services.voicelink_clients.service.provision_voicelink_client",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("boom"),
-        ),
-        patch("api.services.voicelink_clients.service.db_client") as db,
-    ):
+async def test_signup_stash_noop_when_provision_key_unset(monkeypatch):
+    monkeypatch.delenv("VOICELINK_PROVISION_KEY", raising=False)
+    with patch("api.services.voicelink_clients.service.db_client") as db:
         db.update_organization_voicelink = AsyncMock()
+        await stash_voicelink_signup_secret(
+            organization_id=11,
+            email="user@example.test",
+            password="platform-pass-xyz",
+        )
+
+    db.update_organization_voicelink.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_signup_stash_never_raises(monkeypatch):
+    monkeypatch.setenv("VOICELINK_PROVISION_KEY", _PROVISION_KEY)
+    with patch("api.services.voicelink_clients.service.db_client") as db:
+        db.update_organization_voicelink = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
         # Must not raise — signup never fails on VoiceLink errors.
-        await provision_voicelink_client_for_signup(
+        await stash_voicelink_signup_secret(
             organization_id=11,
             email="user@example.test",
             password="placeholder-pass",
         )
-
-    update_kwargs = db.update_organization_voicelink.await_args.kwargs
-    assert update_kwargs["status"] == "pending"
 
 
 # ======== PASSWORD / OWNER RESOLUTION ========
@@ -555,32 +559,3 @@ async def test_ensure_provisions_when_missing():
     assert prov.await_args.kwargs["password"]  # a generated password was passed
 
 
-# ======== retry sweep (cron) ========
-
-
-@pytest.mark.asyncio
-async def test_retry_sweep_provisions_pending_only():
-    from api.tasks.voicelink_provisioning import (
-        retry_pending_voicelink_provisioning,
-    )
-
-    orgs = [
-        SimpleNamespace(id=1, voicelink_status="provisioned", voicelink_client_id="1"),
-        SimpleNamespace(id=2, voicelink_status="pending", voicelink_client_id=None),
-        SimpleNamespace(id=3, voicelink_status="pending", voicelink_client_id=None),
-        SimpleNamespace(id=4, voicelink_status=None, voicelink_client_id=None),
-    ]
-    with (
-        patch("api.tasks.voicelink_provisioning.db_client") as db,
-        patch(
-            "api.tasks.voicelink_provisioning.ensure_voicelink_client",
-            new_callable=AsyncMock,
-        ) as ens,
-    ):
-        db.list_organizations_with_users = AsyncMock(return_value=orgs)
-        ens.return_value = {"status": "provisioned", "client_id": "900"}
-        result = await retry_pending_voicelink_provisioning({})
-
-    assert result == {"pending": 2, "provisioned": 2}
-    assert ens.await_count == 2
-    assert {call.args[0] for call in ens.await_args_list} == {2, 3}

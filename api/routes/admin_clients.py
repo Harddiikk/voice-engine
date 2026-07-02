@@ -34,6 +34,7 @@ from api.schemas.admin_clients import (
     RetryProvisionResponse,
 )
 from api.services.auth.depends import get_superuser
+from api.services.telephony_marketplace import persist_org_did
 from api.services.voicelink_clients import (
     VoiceLinkClientError,
     derive_username,
@@ -50,7 +51,6 @@ from api.services.voicelink_kyc import (
     get_kyc_client,
     resolve_org_voicelink_client_id,
 )
-from api.services.voicelink_kyc.client import DEFAULT_VOICELINK_API_BASE
 
 router = APIRouter(prefix="/admin/clients", tags=["admin-clients"])
 
@@ -361,59 +361,36 @@ async def assign_did(
 ) -> AssignDidResponse:
     """Create/update the org's ``voicelink`` telephony configuration with a DID.
 
-    The row is org-scoped and marked default for outbound, so the client can
-    dial as soon as the owner maps the DID + channels in the VoiceLink portal.
+    Thin wrapper over ``persist_org_did`` (shared with the marketplace buy
+    flow): the config row is org-scoped and marked default for outbound, so
+    the client can dial as soon as the owner maps the DID + channels in the
+    VoiceLink portal. Manual assignment does NOT arm the KYC dialing gate
+    unless ``arm_kyc`` is set (a marketplace purchase always arms it).
     """
     organization = await db_client.get_organization_by_id(org_id)
     if organization is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
     client_id = request.client_id or organization.voicelink_client_id
-
-    configs = await db_client.list_telephony_configurations_by_provider(
-        org_id, VOICELINK_PROVIDER
-    )
-
-    if configs:
-        target = _ordered_voicelink_configs(configs)[0]
-        credentials = dict(target.credentials or {})
-        credentials["did_number"] = request.did_number
-        credentials.setdefault("api_base", DEFAULT_VOICELINK_API_BASE)
-        if client_id:
-            credentials["client_id"] = str(client_id)
-        updated = await db_client.update_telephony_configuration(
-            target.id, org_id, credentials=credentials
+    try:
+        configuration_id, created = await persist_org_did(
+            org_id,
+            request.did_number,
+            client_id=str(client_id) if client_id else None,
+            username=organization.voicelink_username,
         )
-        if updated is None:
-            raise HTTPException(
-                status_code=404, detail="Telephony configuration not found"
-            )
-        if not updated.is_default_outbound:
-            await db_client.set_default_telephony_configuration(updated.id, org_id)
-        configuration_id = updated.id
-        created = False
-    else:
-        credentials = {
-            "api_base": DEFAULT_VOICELINK_API_BASE,
-            "did_number": request.did_number,
-        }
-        if organization.voicelink_username:
-            credentials["username"] = organization.voicelink_username
-        if client_id:
-            credentials["client_id"] = str(client_id)
-        row = await db_client.create_telephony_configuration(
-            organization_id=org_id,
-            name="VoiceLink",
-            provider=VOICELINK_PROVIDER,
-            credentials=credentials,
-            is_default_outbound=True,
+    except LookupError:
+        raise HTTPException(
+            status_code=404, detail="Telephony configuration not found"
         )
-        configuration_id = row.id
-        created = True
+
+    if request.arm_kyc:
+        await db_client.mark_organization_did_purchased(org_id)
 
     logger.info(
         f"Superuser {user.id} assigned DID to org {org_id} "
-        f"(configuration_id={configuration_id}, created={created})"
+        f"(configuration_id={configuration_id}, created={created}, "
+        f"arm_kyc={request.arm_kyc})"
     )
     return AssignDidResponse(
         configuration_id=configuration_id,

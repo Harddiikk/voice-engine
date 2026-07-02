@@ -19,7 +19,7 @@ from api.db import db_client
 from api.services.auth import google_oauth
 from api.services.auth.admin_emails import promote_if_admin_email
 from api.services.auth.depends import create_user_configuration_with_mps_key
-from api.services.voicelink_clients import provision_voicelink_client_for_signup
+from api.services.voicelink_clients import stash_voicelink_signup_secret
 from api.utils.auth import create_jwt_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -113,16 +113,18 @@ async def _find_or_create_google_user(email: str, name: str):
     except Exception:
         logger.warning("Failed to create default config for Google user", exc_info=True)
 
-    # Best-effort VoiceLink client (needs a password — generate one; user logs in
-    # to OUR app via Google, never needs this).
+    # Best-effort: stash a generated secret for later lazy VoiceLink client
+    # provisioning (the user logs in to OUR app via Google and never needs
+    # this password).
     try:
-        await provision_voicelink_client_for_signup(
+        await stash_voicelink_signup_secret(
             organization_id=organization.id,
             email=email,
             password=secrets.token_urlsafe(16),
-            name=name,
         )
     except Exception:
-        logger.warning("VoiceLink provision skipped for Google user", exc_info=True)
+        logger.warning(
+            "VoiceLink signup secret stash skipped for Google user", exc_info=True
+        )
 
     return user

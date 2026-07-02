@@ -1,28 +1,50 @@
 "use client";
 
 import { Phone } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { client } from "@/client/client.gen";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 
 interface Did {
-  did_id: number;
+  did_id?: number | null;
   did_number: number | string | null;
   type_label?: string | null;
   country_code?: number | string | null;
+  source?: string | null; // "local" when healed from our own records
 }
 
-// Buys a phone number from the reseller pool (after KYC), charged to the credit
-// balance. Calls go through the shared hey-api client.
+interface NumbersPayload {
+  numbers?: Did[];
+  price_inr?: number;
+  setup_seconds?: number;
+}
+
+// Buys a phone number from the reseller pool (KYC-gated on the backend),
+// charged to the credit balance. Calls go through the shared hey-api client.
 export function PhoneNumbersSection() {
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const [available, setAvailable] = useState<Did[]>([]);
   const [owned, setOwned] = useState<Did[]>([]);
+  const [priceInr, setPriceInr] = useState<number | null>(null);
+  const [setupSeconds, setSetupSeconds] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [buying, setBuying] = useState<number | null>(null);
+  const [pendingBuy, setPendingBuy] = useState<Did | null>(null);
   const hasFetched = useRef(false);
 
   useEffect(() => {
@@ -37,7 +59,10 @@ export function PhoneNumbersSection() {
         client.get({ url: "/api/v1/telephony/marketplace/numbers" }),
         client.get({ url: "/api/v1/telephony/marketplace/my-numbers" }),
       ]);
-      setAvailable(((a.data as { numbers?: Did[] })?.numbers) ?? []);
+      const payload = a.data as NumbersPayload | undefined;
+      setAvailable(payload?.numbers ?? []);
+      setPriceInr(payload?.price_inr ?? null);
+      setSetupSeconds(payload?.setup_seconds ?? null);
       setOwned(((m.data as { numbers?: Did[] })?.numbers) ?? []);
     } catch {
       /* ignore */
@@ -47,6 +72,7 @@ export function PhoneNumbersSection() {
   }
 
   async function buy(did: Did) {
+    if (did.did_id == null) return;
     setBuying(did.did_id);
     try {
       const res = await client.post({
@@ -54,14 +80,24 @@ export function PhoneNumbersSection() {
         body: { did_id: did.did_id },
       });
       if (res.error) {
+        const status = res.response?.status;
         const detail = (res.error as { detail?: string })?.detail ?? "";
-        if (detail.includes("kyc") || (res.response?.status === 403))
-          toast.error("Complete KYC before buying a number");
-        else if (detail.includes("not_provisioned"))
+        if (status === 403 || detail.includes("KYC")) {
+          toast.error("Complete KYC before buying a number", {
+            action: {
+              label: "Complete KYC",
+              onClick: () => router.push("/kyc"),
+            },
+          });
+        } else if (status === 502 && detail.includes("kyc_status_unavailable")) {
+          toast.error("KYC check temporarily unavailable — try again in a minute");
+        } else if (detail.includes("not_provisioned")) {
           toast.error("Your telephony account isn't set up yet — contact support");
-        else if (detail.includes("insufficient"))
+        } else if (detail.includes("insufficient")) {
           toast.error("Not enough credits — top up first");
-        else toast.error("Couldn't buy this number");
+        } else {
+          toast.error("Couldn't buy this number");
+        }
         return;
       }
       toast.success(`Number ${did.did_number} is yours!`);
@@ -75,6 +111,8 @@ export function PhoneNumbersSection() {
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
 
+  const credits = setupSeconds != null ? Math.round(setupSeconds / 60) : null;
+
   return (
     <div className="space-y-5">
       <div className="space-y-2">
@@ -85,7 +123,7 @@ export function PhoneNumbersSection() {
           <div className="flex flex-wrap gap-2">
             {owned.map((d) => (
               <span
-                key={d.did_id}
+                key={d.did_id ?? `local-${d.did_number}`}
                 className="inline-flex items-center gap-1 rounded-md border px-3 py-1 text-sm"
               >
                 <Phone className="h-3.5 w-3.5" /> {d.did_number}
@@ -108,16 +146,21 @@ export function PhoneNumbersSection() {
           <div className="grid gap-2 sm:grid-cols-2">
             {available.map((d) => (
               <div
-                key={d.did_id}
+                key={d.did_id ?? `pool-${d.did_number}`}
                 className="flex items-center justify-between rounded-md border p-3"
               >
                 <div>
                   <p className="font-mono text-sm">{d.did_number}</p>
-                  {d.type_label ? (
-                    <p className="text-xs text-muted-foreground">{d.type_label}</p>
-                  ) : null}
+                  <p className="text-xs text-muted-foreground">
+                    {d.type_label ? `${d.type_label} · ` : ""}
+                    {priceInr != null ? `₹${priceInr}` : ""}
+                  </p>
                 </div>
-                <Button size="sm" disabled={buying === d.did_id} onClick={() => buy(d)}>
+                <Button
+                  size="sm"
+                  disabled={buying === d.did_id}
+                  onClick={() => setPendingBuy(d)}
+                >
                   {buying === d.did_id ? "Buying..." : "Buy"}
                 </Button>
               </div>
@@ -128,6 +171,39 @@ export function PhoneNumbersSection() {
           Requires completed KYC. Charged to your call-credit balance.
         </p>
       </div>
+
+      <AlertDialog
+        open={pendingBuy !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingBuy(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Buy {pendingBuy?.did_number}
+              {priceInr != null ? ` for ₹${priceInr}` : ""}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {credits != null
+                ? `${credits} credits will be deducted from your call-credit balance.`
+                : "The number will be charged to your call-credit balance."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const did = pendingBuy;
+                setPendingBuy(null);
+                if (did) void buy(did);
+              }}
+            >
+              Buy number
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

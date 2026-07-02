@@ -14,7 +14,7 @@ from api.services.configuration.ai_model_configuration import (
 )
 from api.services.posthog_client import capture_event
 from api.services.rate_limit import client_ip, rate_limit_ip
-from api.services.voicelink_clients import provision_voicelink_client_for_signup
+from api.services.voicelink_clients import stash_voicelink_signup_secret
 from api.utils.auth import create_jwt_token, hash_password, verify_password
 
 router = APIRouter(
@@ -77,14 +77,14 @@ async def signup(
             "Failed to create default configuration for OSS user", exc_info=True
         )
 
-    # Best-effort: create a VoiceLink client for the new org. Never fails
-    # signup; skips ADMIN_EMAILS users and unset reseller credentials. The
-    # plaintext password is forwarded to VoiceLink only — never logged.
-    await provision_voicelink_client_for_signup(
+    # Best-effort: stash an encrypted copy of the signup password so the org's
+    # VoiceLink client can be provisioned lazily later (first KYC entry /
+    # number purchase) with the same platform password. Never fails signup;
+    # skips ADMIN_EMAILS users. The plaintext password is never logged.
+    await stash_voicelink_signup_secret(
         organization_id=organization.id,
         email=request.email,
         password=request.password,
-        name=request.name,
     )
 
     # Create JWT token

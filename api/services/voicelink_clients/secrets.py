@@ -1,9 +1,11 @@
 """Reversible encryption for the VoiceLink provisioning secret.
 
 The user's platform password is only available in plaintext at signup. To let
-a later admin "Create client" reuse the *same* password, we store a Fernet-
-encrypted copy on the organization (``voicelink_provision_secret``), wiped on
-successful provisioning.
+later (lazy) provisioning reuse the *same* password, we store a Fernet-
+encrypted copy on the organization (``voicelink_provision_secret``). It is
+RETAINED after successful provisioning: we authenticate as the client
+(username + password) when dialing on its VoiceLink account, and the admin
+Clients view can reveal it as the client's portal-password record.
 
 The key comes from ``VOICELINK_PROVISION_KEY`` (a urlsafe-base64 32-byte Fernet
 key, e.g. ``Fernet.generate_key()``). When the key is unset the util degrades to

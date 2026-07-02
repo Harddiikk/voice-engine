@@ -20,7 +20,6 @@ from api.services.voicelink_clients.secrets import (
     encrypt_provision_secret,
 )
 
-DEFAULT_API_BASE = "https://app.voicelink.co.in/api"
 _PROVISION_KEY = Fernet.generate_key().decode()
 
 
@@ -252,36 +251,34 @@ def test_retry_provision_rejects_short_passwords():
     assert response.status_code == 422
 
 
-# ======== ASSIGN DID ========
+# ======== ASSIGN DID (thin call over persist_org_did) ========
 
 
-def test_assign_did_creates_org_scoped_default_voicelink_config():
+def test_assign_did_delegates_to_persist_org_did_without_arming_kyc():
     app = _make_test_app()
     client = TestClient(app)
 
     org = _org(voicelink_client_id="474")
-    with patch("api.routes.admin_clients.db_client") as db:
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch(
+            "api.routes.admin_clients.persist_org_did",
+            new=AsyncMock(return_value=(77, True)),
+        ) as persist,
+    ):
         db.get_organization_by_id = AsyncMock(return_value=org)
-        db.list_telephony_configurations_by_provider = AsyncMock(return_value=[])
-        db.create_telephony_configuration = AsyncMock(
-            return_value=SimpleNamespace(id=77)
-        )
+        db.mark_organization_did_purchased = AsyncMock()
 
         response = client.post(
             "/admin/clients/5/assign-did", json={"did_number": "919484959244"}
         )
 
     assert response.status_code == 200
-    create_kwargs = db.create_telephony_configuration.await_args.kwargs
-    assert create_kwargs["organization_id"] == 5
-    assert create_kwargs["provider"] == "voicelink"
-    assert create_kwargs["is_default_outbound"] is True
-    assert create_kwargs["credentials"] == {
-        "api_base": DEFAULT_API_BASE,
-        "did_number": "919484959244",
-        "username": "jane.5",
-        "client_id": "474",
-    }
+    persist.assert_awaited_once_with(
+        5, "919484959244", client_id="474", username="jane.5"
+    )
+    # Manual assignment must NOT arm the KYC dialing gate by default.
+    db.mark_organization_did_purchased.assert_not_awaited()
 
     body = response.json()
     assert body["configuration_id"] == 77
@@ -290,44 +287,60 @@ def test_assign_did_creates_org_scoped_default_voicelink_config():
     assert body["client_id"] == "474"
 
 
-def test_assign_did_updates_existing_config_and_marks_default():
+def test_assign_did_prefers_request_client_id_and_arms_kyc_on_request():
     app = _make_test_app()
     client = TestClient(app)
 
     org = _org(voicelink_client_id=None)
-    existing = SimpleNamespace(
-        id=42,
-        is_default_outbound=False,
-        credentials={"api_base": "https://custom.example/api", "username": "u"},
-    )
-    updated = SimpleNamespace(id=42, is_default_outbound=False)
-    with patch("api.routes.admin_clients.db_client") as db:
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch(
+            "api.routes.admin_clients.persist_org_did",
+            new=AsyncMock(return_value=(42, False)),
+        ) as persist,
+    ):
         db.get_organization_by_id = AsyncMock(return_value=org)
-        db.list_telephony_configurations_by_provider = AsyncMock(
-            return_value=[existing]
-        )
-        db.update_telephony_configuration = AsyncMock(return_value=updated)
-        db.set_default_telephony_configuration = AsyncMock()
+        db.mark_organization_did_purchased = AsyncMock(return_value=True)
 
         response = client.post(
             "/admin/clients/5/assign-did",
-            json={"did_number": "919484959244", "client_id": "888"},
+            json={
+                "did_number": "919484959244",
+                "client_id": "888",
+                "arm_kyc": True,
+            },
         )
 
     assert response.status_code == 200
-    update_call = db.update_telephony_configuration.await_args
-    assert update_call.args == (42, 5)
-    credentials = update_call.kwargs["credentials"]
-    # Existing auth credentials are preserved; DID/client_id are stamped.
-    assert credentials["username"] == "u"
-    assert credentials["api_base"] == "https://custom.example/api"
-    assert credentials["did_number"] == "919484959244"
-    assert credentials["client_id"] == "888"
-    db.set_default_telephony_configuration.assert_awaited_once_with(42, 5)
+    persist.assert_awaited_once_with(
+        5, "919484959244", client_id="888", username="jane.5"
+    )
+    db.mark_organization_did_purchased.assert_awaited_once_with(5)
 
     body = response.json()
     assert body["created"] is False
     assert body["client_id"] == "888"
+
+
+def test_assign_did_404_when_config_vanishes_mid_update():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch(
+            "api.routes.admin_clients.persist_org_did",
+            new=AsyncMock(side_effect=LookupError("telephony_configuration_not_found")),
+        ),
+    ):
+        db.get_organization_by_id = AsyncMock(return_value=_org())
+
+        response = client.post(
+            "/admin/clients/5/assign-did", json={"did_number": "919484959244"}
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Telephony configuration not found"
 
 
 def test_assign_did_404_for_unknown_org():

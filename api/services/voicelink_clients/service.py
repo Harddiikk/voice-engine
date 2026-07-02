@@ -8,12 +8,15 @@ and stores the outcome on the organization:
 - failure (e.g. 422 — no channels available) → ``voicelink_status = "pending"``
   with the upstream error message so the admin Clients view can retry.
 
-``provision_voicelink_client_for_signup`` is the best-effort signup hook: it
-skips ADMIN_EMAILS users (the deployment owner) and unset reseller creds,
-and never raises — signup must not fail because of VoiceLink.
+``stash_voicelink_signup_secret`` is the best-effort signup hook: it skips
+ADMIN_EMAILS users (the deployment owner), stores only an encrypted copy of
+the signup password, and never raises — signup must not fail because of
+VoiceLink. The client itself is provisioned LAZILY by
+``ensure_voicelink_client`` at the first moment it's needed (KYC entry,
+number purchase, admin create).
 
 The plaintext password is forwarded to VoiceLink only and is NEVER logged
-or stored.
+or stored unencrypted.
 """
 
 import os
@@ -216,66 +219,41 @@ async def provision_voicelink_client(
     }
 
 
-async def provision_voicelink_client_for_signup(
+async def stash_voicelink_signup_secret(
     *,
     organization_id: int,
     email: str,
     password: str,
-    name: Optional[str] = None,
 ) -> None:
     """Best-effort signup hook — NEVER raises and never fails signup.
 
-    Skips entirely for ADMIN_EMAILS users (the deployment owner does not get
-    a VoiceLink client) and when the reseller credentials are unset.
+    Stores ONLY an encrypted copy of the signup password
+    (``voicelink_provision_secret``) so the lazy provisioner
+    (:func:`ensure_voicelink_client` — first KYC entry, number purchase, admin
+    create) can create the VoiceLink client later with the same platform
+    password. No VoiceLink client is created at signup. Skips ADMIN_EMAILS
+    users entirely (the deployment owner uses the reseller account) and
+    no-ops when ``VOICELINK_PROVISION_KEY`` is unset.
     """
     try:
         if is_admin_email(email):
             logger.info(
-                f"Skipping VoiceLink provisioning for admin email signup "
+                f"Skipping VoiceLink signup secret for admin email signup "
                 f"(org {organization_id})"
             )
             return
 
-        client = get_voicelink_clients_client()
-        if not client.is_configured:
-            logger.info(
-                "Skipping VoiceLink provisioning — reseller credentials unset"
+        secret = encrypt_provision_secret(password)
+        if secret:
+            await db_client.update_organization_voicelink(
+                organization_id, provision_secret=secret
             )
-            # Stash the encrypted password so admin "Create client" can
-            # provision later (once reseller creds are set) with the same
-            # platform password. No-op when no provisioning key is configured.
-            secret = encrypt_provision_secret(password)
-            if secret:
-                await db_client.update_organization_voicelink(
-                    organization_id, provision_secret=secret
-                )
-            return
-
-        await provision_voicelink_client(
-            organization_id,
-            email=email,
-            password=password,
-            name=name,
-            client=client,
-        )
     except Exception:
-        # Catch-all: provisioning errors are recorded as "pending" inside
-        # provision_voicelink_client; anything unexpected lands here.
         logger.warning(
-            f"VoiceLink provisioning failed unexpectedly for org "
+            f"Failed to stash the VoiceLink signup secret for org "
             f"{organization_id}",
             exc_info=True,
         )
-        try:
-            await db_client.update_organization_voicelink(
-                organization_id,
-                status=VOICELINK_STATUS_PENDING,
-                error="Unexpected provisioning error — see API logs",
-            )
-        except Exception:
-            logger.warning(
-                "Failed to record pending VoiceLink status", exc_info=True
-            )
 
 
 def generate_client_password(length: int = 24) -> str:

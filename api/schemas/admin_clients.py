@@ -93,6 +93,13 @@ class AssignDidRequest(BaseModel):
             "the org's provisioned voicelink_client_id"
         ),
     )
+    arm_kyc: bool = Field(
+        default=False,
+        description=(
+            "Also stamp voicelink_did_purchased_at so the KYC dialing gate "
+            "applies to this org (marketplace purchases always do this)"
+        ),
+    )
 
 
 class AssignDidResponse(BaseModel):

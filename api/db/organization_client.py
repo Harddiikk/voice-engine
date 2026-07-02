@@ -260,6 +260,25 @@ class OrganizationClient(BaseDBClient):
             await session.refresh(organization)
             return organization
 
+    async def mark_organization_did_purchased(self, organization_id: int) -> bool:
+        """Arm the KYC dialing gate: stamp ``voicelink_did_purchased_at``.
+
+        Only writes when the column is currently NULL so the FIRST purchase
+        time is preserved across later purchases. Returns True iff this call
+        armed it (False when already set or the org doesn't exist).
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                update(OrganizationModel)
+                .where(
+                    OrganizationModel.id == organization_id,
+                    OrganizationModel.voicelink_did_purchased_at.is_(None),
+                )
+                .values(voicelink_did_purchased_at=datetime.now(timezone.utc))
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def add_user_to_organization(
         self, user_id: int, organization_id: int
     ) -> None:
