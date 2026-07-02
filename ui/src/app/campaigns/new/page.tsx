@@ -69,18 +69,14 @@ export default function NewCampaignPage() {
     const [retryOnBusy, setRetryOnBusy] = useState(true);
     const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
     const [retryOnVoicemail, setRetryOnVoicemail] = useState(true);
-    // Schedule config state
-    const [scheduleEnabled, setScheduleEnabled] = useState(false);
-    const [scheduleTimezone, setScheduleTimezone] = useState<ITimezoneOption | string>(() => {
-        try {
-            return Intl.DateTimeFormat().resolvedOptions().timeZone;
-        } catch {
-            return 'UTC';
-        }
-    });
-    const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([
-        { day_of_week: 0, start_time: '09:00', end_time: '17:00' },
-    ]);
+    // Schedule config state — default calling window: 09:00-21:00 IST every
+    // day (mirrors the backend's DEFAULT_CAMPAIGN_CALLING_WINDOW). Restored
+    // last-campaign settings (below) intentionally override these defaults.
+    const [scheduleEnabled, setScheduleEnabled] = useState(true);
+    const [scheduleTimezone, setScheduleTimezone] = useState<ITimezoneOption | string>('Asia/Kolkata');
+    const [timeSlots, setTimeSlots] = useState<TimeSlot[]>(
+        Array.from({ length: 7 }, (_, day) => ({ day_of_week: day, start_time: '09:00', end_time: '21:00' })),
+    );
     // Circuit breaker config state
     const [circuitBreakerEnabled, setCircuitBreakerEnabled] = useState(true);
     const [circuitBreakerFailureThreshold, setCircuitBreakerFailureThreshold] = useState<string>('50');
@@ -606,6 +602,10 @@ export default function NewCampaignPage() {
                                     {createError}
                                 </div>
                             )}
+
+                            <p className="text-sm text-muted-foreground">
+                                Calls are placed 09:00&ndash;21:00 IST by default &mdash; edit under Advanced Settings.
+                            </p>
 
                             <div className="flex gap-4 pt-4">
                                 <Button

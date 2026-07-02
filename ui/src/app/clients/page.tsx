@@ -2,7 +2,10 @@
 
 import {
   Coins,
+  Copy,
   ExternalLink,
+  Eye,
+  KeyRound,
   Loader2,
   Phone,
   RefreshCw,
@@ -45,10 +48,14 @@ import {
   type AdminClient,
   type AdminClientKycStatus,
   assignDidToClient,
+  type ClientPasswordResult,
   createClientForOrg,
   getClientKycStatus,
+  getClientPassword,
   grantCreditsToClient,
   listAdminClients,
+  NO_STORED_PASSWORD,
+  recordClientPassword,
   retryProvisionClient,
 } from "@/lib/adminClients";
 import { useAuth } from "@/lib/auth";
@@ -195,6 +202,19 @@ export default function ClientsPage() {
   const [grantTarget, setGrantTarget] = useState<AdminClient | null>(null);
   const [grantMinutes, setGrantMinutes] = useState("");
 
+  // View password dialog state — the revealed copy is kept only while the
+  // dialog is open, never in the row data.
+  const [passwordTarget, setPasswordTarget] = useState<AdminClient | null>(
+    null,
+  );
+  const [revealedPassword, setRevealedPassword] =
+    useState<ClientPasswordResult | null>(null);
+  const [passwordLoading, setPasswordLoading] = useState<number | null>(null);
+
+  // Record password dialog state
+  const [recordTarget, setRecordTarget] = useState<AdminClient | null>(null);
+  const [recordPassword, setRecordPassword] = useState("");
+
   // On-demand per-org KYC status (fetched per row; never in bulk)
   const [kycStatuses, setKycStatuses] = useState<
     Record<number, AdminClientKycStatus>
@@ -241,6 +261,73 @@ export default function ClientsPage() {
   const openGrantDialog = (client: AdminClient) => {
     setGrantTarget(client);
     setGrantMinutes("");
+  };
+
+  const openRecordDialog = (client: AdminClient) => {
+    setRecordTarget(client);
+    setRecordPassword("");
+  };
+
+  const closePasswordDialog = () => {
+    setPasswordTarget(null);
+    setRevealedPassword(null);
+  };
+
+  const copyToClipboard = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(`${label} copied to clipboard`);
+    } catch {
+      toast.error("Failed to copy to clipboard");
+    }
+  };
+
+  const onViewPassword = async (client: AdminClient) => {
+    setPasswordLoading(client.organization_id);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error("Missing access token");
+      const result = await getClientPassword(token, client.organization_id);
+      setRevealedPassword(result);
+      setPasswordTarget(client);
+    } catch (err) {
+      if (err instanceof Error && err.message === NO_STORED_PASSWORD) {
+        toast.error("No password stored for this client");
+      } else {
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : "Failed to fetch the stored password",
+        );
+      }
+    } finally {
+      setPasswordLoading(null);
+    }
+  };
+
+  const onRecordPassword = async () => {
+    if (!recordTarget || recordPassword.length < 8) return;
+    setSubmitting(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error("Missing access token");
+      await recordClientPassword(
+        token,
+        recordTarget.organization_id,
+        recordPassword,
+      );
+      toast.success(
+        "Portal password recorded — this does not change it on VoiceLink",
+      );
+      setRecordTarget(null);
+      setRecordPassword("");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to record the password",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const grantMinutesNumber = Number(grantMinutes);
@@ -603,6 +690,44 @@ export default function ClientsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              onClick={() => onViewPassword(client)}
+                              disabled={
+                                passwordLoading === client.organization_id
+                              }
+                            >
+                              {passwordLoading === client.organization_id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Eye className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            <p>View the stored VoiceLink portal password</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openRecordDialog(client)}
+                            >
+                              <KeyRound className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            <p>
+                              Record the portal password for reference (does
+                              not change it on VoiceLink)
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => openRetryDialog(client)}
                             >
                               <RotateCcw className="h-3.5 w-3.5" />
@@ -773,8 +898,8 @@ export default function ClientsPage() {
                 {retryTarget?.voicelink_username
                   ? ` (${retryTarget.voicelink_username})`
                   : ""}
-                . Client passwords are never stored — set a new VoiceLink
-                password for the client below.
+                . The password below is set on the new VoiceLink client and an
+                encrypted copy is kept as the org&apos;s password record.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-2">
@@ -803,6 +928,114 @@ export default function ClientsPage() {
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 )}
                 Retry provisioning
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* View password dialog */}
+        <Dialog
+          open={passwordTarget !== null}
+          onOpenChange={(open) => !open && closePasswordDialog()}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>VoiceLink portal password</DialogTitle>
+              <DialogDescription>
+                Stored copy of the portal password for{" "}
+                {passwordTarget?.owner_email ?? "this organization"}. This is
+                a reference record — if the password was changed in the
+                VoiceLink portal, record the new one here.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {revealedPassword?.username && (
+                <div className="space-y-2">
+                  <Label>Username</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 truncate rounded-md border border-border/60 bg-muted px-3 py-2 font-mono text-sm">
+                      {revealedPassword.username}
+                    </code>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        copyToClipboard(revealedPassword.username!, "Username")
+                      }
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label>Password</Label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 truncate rounded-md border border-border/60 bg-muted px-3 py-2 font-mono text-sm">
+                    {revealedPassword?.password}
+                  </code>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      revealedPassword &&
+                      copyToClipboard(revealedPassword.password, "Password")
+                    }
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={closePasswordDialog}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Record password dialog */}
+        <Dialog
+          open={recordTarget !== null}
+          onOpenChange={(open) => !open && setRecordTarget(null)}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Record portal password</DialogTitle>
+              <DialogDescription>
+                This records the portal password for{" "}
+                {recordTarget?.owner_email ?? "this organization"} for
+                reference — it does not change it on VoiceLink. Set the actual
+                password in the VoiceLink portal, then record it here.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="record-password">Portal password</Label>
+              <Input
+                id="record-password"
+                type="password"
+                value={recordPassword}
+                onChange={(e) => setRecordPassword(e.target.value)}
+                placeholder="Minimum 8 characters"
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setRecordTarget(null)}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={onRecordPassword}
+                disabled={submitting || recordPassword.length < 8}
+              >
+                {submitting && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Record password
               </Button>
             </DialogFooter>
           </DialogContent>

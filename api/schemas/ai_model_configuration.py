@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.services.configuration.registry import (
     DograhEmbeddingsConfiguration,
@@ -50,10 +50,30 @@ class EffectiveAIModelConfiguration(BaseModel):
 
 
 class DograhManagedAIModelConfiguration(BaseModel):
-    api_key: str
+    # A list means multiple managed MPS keys (e.g. rotation); downstream
+    # registry configs accept str | list[str] natively.
+    api_key: str | list[str]
     voice: str = DOGRAH_DEFAULT_VOICE
     speed: float = Field(default=1.0, ge=DOGRAH_SPEED_MIN, le=DOGRAH_SPEED_MAX)
     language: str = DOGRAH_DEFAULT_LANGUAGE
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value):
+        if isinstance(value, list):
+            if not value:
+                raise ValueError("api_key list must not be empty")
+            if any(not key.strip() for key in value):
+                raise ValueError("api_key list entries must not be blank")
+        elif not value.strip():
+            raise ValueError("api_key must not be blank")
+        return value
+
+    def first_api_key(self) -> str:
+        """Return a single key for callers that need a plain string."""
+        if isinstance(self.api_key, list):
+            return self.api_key[0]
+        return self.api_key
 
 
 class BYOKPipelineAIModelConfiguration(BaseModel):
@@ -116,6 +136,10 @@ class OrganizationAIModelConfigurationResponse(BaseModel):
     configuration: dict | None
     effective_configuration: dict
     source: Literal["organization_v2", "legacy_user_v1", "empty"]
+    # Set when a stored v2 row exists but fails validation: the platform is
+    # silently running on legacy settings, and the UI should surface that.
+    configuration_invalid: bool = False
+    configuration_error: str | None = None
 
 
 def compile_ai_model_configuration_v2(

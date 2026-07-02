@@ -70,6 +70,23 @@ export interface GrantCreditsResult {
   credits_seconds_remaining?: number | null;
 }
 
+// Backend detail string for GET /password when no display copy is stored
+// (absent, encryption key unset, or the stored token failed to decrypt).
+export const NO_STORED_PASSWORD = "no_stored_password";
+
+export interface ClientPasswordResult {
+  username?: string | null;
+  password: string;
+}
+
+export interface RecordPasswordResult {
+  organization_id: number;
+  stored: boolean;
+  // Reminder: this is a record of the portal password, not a change on
+  // VoiceLink (there is no upstream change-password API).
+  note: string;
+}
+
 // "ok" = fetched from VoiceLink | "no_client" = org has no VoiceLink client
 // id | "disabled" = reseller credentials unset on the backend.
 export type AdminKycState = "ok" | "no_client" | "disabled";
@@ -175,3 +192,16 @@ export const grantCreditsToClient = (
 
 export const getClientKycStatus = (token: string, organizationId: number) =>
   adminFetch<AdminClientKycStatus>(token, `/${organizationId}/kyc-status`);
+
+export const getClientPassword = (token: string, organizationId: number) =>
+  adminFetch<ClientPasswordResult>(token, `/${organizationId}/password`);
+
+export const recordClientPassword = (
+  token: string,
+  organizationId: number,
+  password: string,
+) =>
+  adminFetch<RecordPasswordResult>(token, `/${organizationId}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });

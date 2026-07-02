@@ -14,7 +14,6 @@ import asyncio
 import signal
 from datetime import UTC, datetime, timedelta
 from typing import Dict
-from zoneinfo import ZoneInfo
 
 import redis.asyncio as aioredis
 from loguru import logger
@@ -33,6 +32,7 @@ from api.services.campaign.campaign_event_protocol import (
 )
 from api.services.campaign.campaign_event_publisher import CampaignEventPublisher
 from api.services.campaign.circuit_breaker import circuit_breaker
+from api.services.campaign.schedule import is_within_schedule
 from api.tasks.arq import enqueue_job
 from api.tasks.function_names import FunctionNames
 
@@ -294,43 +294,20 @@ class CampaignOrchestrator:
         - No slots configured
         - Invalid timezone (fail open)
         - Current time matches a slot
+
+        Slot matching (see api.services.campaign.schedule) supports overnight
+        windows (start_time > end_time, e.g. 22:00-02:00) which span midnight
+        into the next day — every slot is checked, not just slots whose
+        day_of_week is today: yesterday's overnight slot can still match this
+        morning.
         """
         if not campaign.orchestrator_metadata:
             return True
 
-        schedule_config = campaign.orchestrator_metadata.get("schedule_config")
-        if not schedule_config:
-            return True
-
-        if not schedule_config.get("enabled", False):
-            return True
-
-        slots = schedule_config.get("slots")
-        if not slots:
-            return True
-
-        timezone_str = schedule_config.get("timezone", "UTC")
-        try:
-            tz = ZoneInfo(timezone_str)
-        except (KeyError, Exception):
-            logger.warning(
-                f"campaign_id: {campaign.id} - Invalid timezone '{timezone_str}' in schedule_config, "
-                f"failing open (allowing scheduling)"
-            )
-            return True
-
-        now = datetime.now(tz)
-        current_day = now.weekday()  # 0=Monday through 6=Sunday
-        current_time = now.strftime("%H:%M")
-
-        for slot in slots:
-            if slot.get("day_of_week") == current_day:
-                start = slot.get("start_time", "")
-                end = slot.get("end_time", "")
-                if start <= current_time < end:
-                    return True
-
-        return False
+        return is_within_schedule(
+            campaign.orchestrator_metadata.get("schedule_config"),
+            campaign_id=campaign.id,
+        )
 
     async def _schedule_next_batch(self, campaign_id: int):
         """Schedule next batch immediately if work available."""

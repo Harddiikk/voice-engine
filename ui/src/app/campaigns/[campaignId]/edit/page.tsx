@@ -199,9 +199,11 @@ export default function EditCampaignPage() {
                 toast.error('Add at least one time slot');
                 return;
             }
+            // start > end is a valid overnight window (wraps past midnight);
+            // only a zero-length slot is invalid — mirrors the backend rule.
             for (const slot of timeSlots) {
-                if (slot.start_time >= slot.end_time) {
-                    toast.error('Start time must be before end time for each slot');
+                if (slot.start_time === slot.end_time) {
+                    toast.error('Start and end time must differ for each slot (end before start runs overnight)');
                     return;
                 }
             }

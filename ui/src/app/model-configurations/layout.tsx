@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 
-import { AdminGuard } from "@/components/AdminGuard";
-
+// Deliberately NOT AdminGuard-wrapped: clients pick their own voice/language
+// here. The page's API endpoints are org-scoped and secrets are masked; the
+// page itself renders a trimmed view for non-admins (ModelConfigurationV2).
 export default function ModelConfigurationsLayout({ children }: { children: ReactNode }) {
-    return <AdminGuard>{children}</AdminGuard>;
+    return <>{children}</>;
 }

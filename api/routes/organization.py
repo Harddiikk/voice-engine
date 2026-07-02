@@ -57,6 +57,7 @@ from api.services.configuration.ai_model_configuration import (
     check_for_masked_keys_in_ai_model_configuration_v2,
     compile_ai_model_configuration_v2,
     convert_legacy_ai_model_configuration_to_v2,
+    get_masked_raw_model_configuration_v2,
     get_organization_ai_model_configuration_v2,
     get_resolved_ai_model_configuration,
     mask_ai_model_configuration_v2,
@@ -260,6 +261,8 @@ async def _model_configuration_v2_response(
         configuration=mask_ai_model_configuration_v2(raw_configuration),
         effective_configuration=mask_user_config(resolved.effective),
         source=resolved.source,
+        configuration_invalid=resolved.organization_configuration_error is not None,
+        configuration_error=resolved.organization_configuration_error,
     )
 
 
@@ -316,6 +319,14 @@ async def get_model_configuration_v2(
     user: UserModel = Depends(get_user_with_selected_organization),
 ):
     return await _model_configuration_v2_response(user=user)
+
+
+@router.get("/model-configurations/v2/raw")
+async def get_model_configuration_v2_raw(
+    user: UserModel = Depends(get_user_with_selected_organization),
+):
+    """Raw stored v2 payload (secrets masked) for debugging invalid rows."""
+    return await get_masked_raw_model_configuration_v2(user.selected_organization_id)
 
 
 @router.put(

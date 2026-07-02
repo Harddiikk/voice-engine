@@ -15,7 +15,10 @@ from fastapi.testclient import TestClient
 from api.routes.admin_clients import router
 from api.services.auth.depends import get_superuser
 from api.services.voicelink_clients import VoiceLinkClientError
-from api.services.voicelink_clients.secrets import encrypt_provision_secret
+from api.services.voicelink_clients.secrets import (
+    decrypt_provision_secret,
+    encrypt_provision_secret,
+)
 
 DEFAULT_API_BASE = "https://app.voicelink.co.in/api"
 _PROVISION_KEY = Fernet.generate_key().decode()
@@ -80,11 +83,17 @@ def test_endpoints_return_403_for_non_superuser():
             "/admin/clients/5/assign-did", json={"did_number": "919484959244"}
         )
         create_response = client.post("/admin/clients/5/create")
+        password_get_response = client.get("/admin/clients/5/password")
+        password_post_response = client.post(
+            "/admin/clients/5/password", json={"password": "placeholder-pass"}
+        )
 
     assert list_response.status_code == 403
     assert retry_response.status_code == 403
     assert assign_response.status_code == 403
     assert create_response.status_code == 403
+    assert password_get_response.status_code == 403
+    assert password_post_response.status_code == 403
 
 
 # ======== LIST ========
@@ -370,7 +379,9 @@ def test_list_reports_active_and_autoheals_when_client_exists():
     assert heal.args == (5,)
     assert heal.kwargs["client_id"] == "474"
     assert heal.kwargs["status"] == "provisioned"
-    assert heal.kwargs["provision_secret"] is None
+    # The stored portal-password copy must be left untouched (it used to be
+    # wiped here by passing provision_secret=None).
+    assert "provision_secret" not in heal.kwargs
 
 
 def test_list_reports_missing_when_not_in_voicelink():
@@ -460,7 +471,9 @@ def test_create_links_when_client_already_exists():
     link = db.update_organization_voicelink.await_args
     assert link.kwargs["client_id"] == "474"
     assert link.kwargs["status"] == "provisioned"
-    assert link.kwargs["provision_secret"] is None
+    # The stored portal-password copy must be left untouched (it used to be
+    # wiped here by passing provision_secret=None).
+    assert "provision_secret" not in link.kwargs
 
 
 def test_create_provisions_with_stored_secret_when_missing(monkeypatch):
@@ -562,5 +575,141 @@ def test_create_404_when_org_missing():
         db.get_organization_with_users = AsyncMock(return_value=None)
 
         response = client.post("/admin/clients/999/create")
+
+    assert response.status_code == 404
+
+
+# ======== PASSWORD (reveal / record the portal-password copy) ========
+
+
+def test_reveal_password_returns_stored_plaintext(monkeypatch):
+    monkeypatch.setenv("VOICELINK_PROVISION_KEY", _PROVISION_KEY)
+    app = _make_test_app()
+    client = TestClient(app)
+
+    secret = encrypt_provision_secret("portal-pass-123")
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(voicelink_provision_secret=secret)
+        )
+
+        response = client.get("/admin/clients/5/password")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["username"] == "jane.5"
+    assert body["password"] == "portal-pass-123"
+
+
+def test_reveal_password_404_when_no_secret_stored():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(voicelink_provision_secret=None)
+        )
+
+        response = client.get("/admin/clients/5/password")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "no_stored_password"
+
+
+def test_reveal_password_404_when_secret_undecryptable(monkeypatch):
+    """A secret encrypted under a lost/rotated key must 404, never 500."""
+    monkeypatch.setenv("VOICELINK_PROVISION_KEY", _PROVISION_KEY)
+    app = _make_test_app()
+    client = TestClient(app)
+
+    foreign_secret = Fernet(Fernet.generate_key()).encrypt(b"pass").decode()
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(voicelink_provision_secret=foreign_secret)
+        )
+
+        response = client.get("/admin/clients/5/password")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "no_stored_password"
+
+
+def test_reveal_password_404_for_unknown_org():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(return_value=None)
+
+        response = client.get("/admin/clients/999/password")
+
+    assert response.status_code == 404
+
+
+def test_record_password_stores_encrypted_display_copy(monkeypatch):
+    monkeypatch.setenv("VOICELINK_PROVISION_KEY", _PROVISION_KEY)
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(return_value=_org())
+        db.update_organization_voicelink = AsyncMock()
+
+        response = client.post(
+            "/admin/clients/5/password", json={"password": "new-portal-pass"}
+        )
+
+    assert response.status_code == 200
+    update = db.update_organization_voicelink.await_args
+    assert update.args == (5,)
+    # Only the secret is written — no other provisioning field is touched.
+    assert set(update.kwargs) == {"provision_secret"}
+    stored = update.kwargs["provision_secret"]
+    assert stored != "new-portal-pass"  # encrypted at rest, never plaintext
+    assert decrypt_provision_secret(stored) == "new-portal-pass"
+
+    body = response.json()
+    assert body["organization_id"] == 5
+    assert body["stored"] is True
+    # The response must flag that this is a record, not a VoiceLink change.
+    assert "does not change" in body["note"]
+
+
+def test_record_password_rejects_short_passwords():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    response = client.post("/admin/clients/5/password", json={"password": "short"})
+
+    assert response.status_code == 422
+
+
+def test_record_password_503_when_provision_key_unset(monkeypatch):
+    monkeypatch.delenv("VOICELINK_PROVISION_KEY", raising=False)
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(return_value=_org())
+        db.update_organization_voicelink = AsyncMock()
+
+        response = client.post(
+            "/admin/clients/5/password", json={"password": "new-portal-pass"}
+        )
+
+    assert response.status_code == 503
+    db.update_organization_voicelink.assert_not_awaited()
+
+
+def test_record_password_404_for_unknown_org():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(return_value=None)
+
+        response = client.post(
+            "/admin/clients/999/password", json={"password": "new-portal-pass"}
+        )
 
     assert response.status_code == 404

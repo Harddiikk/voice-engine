@@ -309,6 +309,9 @@ export default function CampaignAdvancedSettings({
                                 <Plus className="h-4 w-4 mr-1" />
                                 Add Time Slot
                             </Button>
+                            <p className="text-sm text-muted-foreground">
+                                An end time earlier than the start time runs overnight into the next day (e.g. 22:00 to 02:00).
+                            </p>
                         </div>
                     </div>
                 )}

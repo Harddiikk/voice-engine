@@ -18,6 +18,7 @@ from api.db.models import UserModel
 from api.enums import OrganizationConfigurationKey
 from api.services.auth.depends import get_user
 from api.services.campaign.runner import campaign_runner_service
+from api.services.campaign.schedule import default_schedule_config
 from api.services.campaign.source_sync import CampaignSourceSyncService
 from api.services.campaign.source_sync_factory import get_sync_service
 from api.services.quota_service import (
@@ -134,8 +135,14 @@ class TimeSlotRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_times(self):
-        if self.start_time >= self.end_time:
-            raise ValueError("start_time must be before end_time")
+        # start_time > end_time is a valid OVERNIGHT window (e.g. 22:00-02:00
+        # wraps past midnight into the next day); only a zero-length window
+        # (start == end) is rejected.
+        if self.start_time == self.end_time:
+            raise ValueError(
+                "start_time and end_time must differ (use start > end for an "
+                "overnight window, e.g. 22:00-02:00)"
+            )
         return self
 
 
@@ -490,10 +497,13 @@ async def create_campaign(
     if request.retry_config:
         retry_config = request.retry_config.model_dump()
 
-    # Build schedule_config dict if provided
-    schedule_config = None
+    # Build schedule_config dict if provided; otherwise fall back to the
+    # platform's default calling window (DEFAULT_CAMPAIGN_CALLING_WINDOW) so
+    # new campaigns don't dial at odd hours. Applies at CREATE only.
     if request.schedule_config:
         schedule_config = request.schedule_config.model_dump()
+    else:
+        schedule_config = default_schedule_config()
 
     # Build circuit_breaker dict if provided
     circuit_breaker_config = None

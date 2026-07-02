@@ -26,10 +26,19 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserConfig } from "@/context/UserConfigContext";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
+import { getModelConfigurationV2Raw } from "@/lib/modelConfigRaw";
 
 export default function ModelConfigurationV2({
     docsUrl,
@@ -40,6 +49,7 @@ export default function ModelConfigurationV2({
 }) {
     const auth = useAuth();
     const { refreshConfig, saveUserConfig } = useUserConfig();
+    const { isAdmin } = useIsAdmin();
     const hasFetched = useRef(false);
     const hasAppliedInitialMigrationAction = useRef(false);
 
@@ -50,6 +60,10 @@ export default function ModelConfigurationV2({
     const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [notice, setNotice] = useState<string | null>(null);
+    const [rawDialogOpen, setRawDialogOpen] = useState(false);
+    const [rawPayload, setRawPayload] = useState<string | null>(null);
+    const [rawLoading, setRawLoading] = useState(false);
+    const [rawError, setRawError] = useState<string | null>(null);
 
     const applyResponse = (nextResponse: OrganizationAiModelConfigurationResponse) => {
         setResponse(nextResponse);
@@ -142,6 +156,69 @@ export default function ModelConfigurationV2({
         setMigrating(false);
     };
 
+    // Fields added on the backend after the last OpenAPI client regeneration.
+    const invalidInfo = response as
+        | (OrganizationAiModelConfigurationResponse & {
+              configuration_invalid?: boolean;
+              configuration_error?: string | null;
+          })
+        | null;
+    const configurationInvalid = invalidInfo?.configuration_invalid === true;
+    const configurationError = invalidInfo?.configuration_error ?? null;
+
+    const openRawPayload = async () => {
+        setRawDialogOpen(true);
+        setRawLoading(true);
+        setRawError(null);
+        try {
+            const token = await auth.getAccessToken();
+            const result = await getModelConfigurationV2Raw(token);
+            setRawPayload(JSON.stringify(result, null, 2));
+        } catch (e) {
+            setRawError(e instanceof Error ? e.message : "Failed to load raw payload");
+        } finally {
+            setRawLoading(false);
+        }
+    };
+
+    const invalidConfigurationBanner = configurationInvalid ? (
+        <div className="space-y-3 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <p>
+                Your saved model configuration failed validation and is being ignored
+                — legacy settings are in effect: {configurationError || "unknown validation error"}
+            </p>
+            {isAdmin && (
+                <Button type="button" variant="outline" size="sm" onClick={openRawPayload}>
+                    View raw payload
+                </Button>
+            )}
+        </div>
+    ) : null;
+
+    const rawPayloadDialog = (
+        <Dialog open={rawDialogOpen} onOpenChange={setRawDialogOpen}>
+            <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                    <DialogTitle>Stored model configuration (raw)</DialogTitle>
+                    <DialogDescription>
+                        The payload stored for this organization, with secrets masked.
+                    </DialogDescription>
+                </DialogHeader>
+                {rawLoading ? (
+                    <Skeleton className="h-48 w-full" />
+                ) : rawError ? (
+                    <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                        {rawError}
+                    </div>
+                ) : (
+                    <pre className="max-h-96 overflow-auto rounded-md bg-muted p-4 text-xs">
+                        {rawPayload}
+                    </pre>
+                )}
+            </DialogContent>
+        </Dialog>
+    );
+
     const migrationWarningDialog = (
         <AlertDialog open={migrationDialogOpen} onOpenChange={setMigrationDialogOpen}>
             <AlertDialogContent>
@@ -201,6 +278,7 @@ export default function ModelConfigurationV2({
                     )}
                 </div>
 
+                {invalidConfigurationBanner}
                 {error && (
                     <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
                         {error}
@@ -229,6 +307,7 @@ export default function ModelConfigurationV2({
                     }}
                 />
                 {migrationWarningDialog}
+                {rawPayloadDialog}
             </div>
         );
     }
@@ -249,6 +328,7 @@ export default function ModelConfigurationV2({
                 </div>
             </div>
 
+            {invalidConfigurationBanner}
             {error && (
                 <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
                     {error}
@@ -269,6 +349,7 @@ export default function ModelConfigurationV2({
                 />
             )}
             {migrationWarningDialog}
+            {rawPayloadDialog}
         </div>
     );
 }

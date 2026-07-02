@@ -11,10 +11,14 @@ from api.schemas.ai_model_configuration import (
     OrganizationAIModelConfigurationV2,
     compile_ai_model_configuration_v2,
 )
+from api.services.configuration import ai_model_configuration as ai_model_configuration_service
 from api.services.configuration.ai_model_configuration import (
     WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY,
     check_for_masked_keys_in_ai_model_configuration_v2,
     convert_legacy_ai_model_configuration_to_v2,
+    get_masked_raw_model_configuration_v2,
+    get_organization_ai_model_configuration_v2_state,
+    get_resolved_ai_model_configuration,
     mask_ai_model_configuration_v2,
     merge_ai_model_configuration_v2_secrets,
     migrate_workflow_configuration_model_override_to_v2,
@@ -71,6 +75,35 @@ def test_dograh_v2_accepts_numeric_speed_in_registry_range():
     effective = compile_ai_model_configuration_v2(config)
 
     assert effective.tts.speed == 1.5
+
+
+def test_dograh_v2_accepts_api_key_list_and_first_api_key():
+    config = OrganizationAIModelConfigurationV2(
+        mode="dograh",
+        dograh=DograhManagedAIModelConfiguration(api_key=["mps-one", "mps-two"]),
+    )
+
+    assert config.dograh.api_key == ["mps-one", "mps-two"]
+    assert config.dograh.first_api_key() == "mps-one"
+
+    effective = compile_ai_model_configuration_v2(config)
+    assert effective.llm.get_all_api_keys() == ["mps-one", "mps-two"]
+    assert effective.tts.get_all_api_keys() == ["mps-one", "mps-two"]
+    assert effective.stt.get_all_api_keys() == ["mps-one", "mps-two"]
+
+
+def test_dograh_v2_first_api_key_returns_plain_string_key():
+    config = DograhManagedAIModelConfiguration(api_key="mps-single")
+    assert config.first_api_key() == "mps-single"
+
+
+def test_dograh_v2_rejects_empty_or_blank_api_key():
+    with pytest.raises(ValidationError):
+        DograhManagedAIModelConfiguration(api_key=[])
+    with pytest.raises(ValidationError):
+        DograhManagedAIModelConfiguration(api_key=["mps-ok", "   "])
+    with pytest.raises(ValidationError):
+        DograhManagedAIModelConfiguration(api_key="   ")
 
 
 def test_dograh_v2_rejects_out_of_range_speed():
@@ -189,6 +222,147 @@ def test_masked_dograh_key_is_preserved_when_saving_same_mode():
 
     assert merged.dograh.api_key == "mps-real-secret"
     check_for_masked_keys_in_ai_model_configuration_v2(merged)
+
+
+def test_masked_dograh_string_over_list_existing_preserves_full_list():
+    existing = OrganizationAIModelConfigurationV2(
+        mode="dograh",
+        dograh=DograhManagedAIModelConfiguration(
+            api_key=["mps-key-one", "mps-key-two"]
+        ),
+    )
+    # The dograh form round-trips the collapsed single masked string.
+    incoming = OrganizationAIModelConfigurationV2(
+        mode="dograh",
+        dograh=DograhManagedAIModelConfiguration(api_key=mask_key("mps-key-one")),
+    )
+
+    merged = merge_ai_model_configuration_v2_secrets(incoming, existing)
+
+    assert merged.dograh.api_key == ["mps-key-one", "mps-key-two"]
+    check_for_masked_keys_in_ai_model_configuration_v2(merged)
+
+
+def test_masked_dograh_list_key_collapses_to_single_masked_string():
+    config = OrganizationAIModelConfigurationV2(
+        mode="dograh",
+        dograh=DograhManagedAIModelConfiguration(
+            api_key=["mps-key-one", "mps-key-two"]
+        ),
+    )
+
+    masked = mask_ai_model_configuration_v2(config)
+
+    assert masked["dograh"]["api_key"] == mask_key("mps-key-one")
+
+
+@pytest.mark.asyncio
+async def test_invalid_v2_row_state_carries_validation_error(monkeypatch):
+    invalid_raw = {"version": 2, "mode": "dograh"}  # missing dograh section
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(return_value=SimpleNamespace(value=invalid_raw)),
+    )
+
+    state = await get_organization_ai_model_configuration_v2_state(42)
+
+    assert state.configuration is None
+    assert state.raw == invalid_raw
+    assert state.validation_error is not None
+    assert "dograh" in state.validation_error
+
+
+@pytest.mark.asyncio
+async def test_invalid_v2_row_resolves_to_legacy_with_configuration_error(monkeypatch):
+    invalid_raw = {"version": 2, "mode": "dograh"}
+    legacy = EffectiveAIModelConfiguration(
+        llm=OpenAILLMService(
+            provider="openai",
+            api_key="sk-llm",
+            model="gpt-4.1",
+        ),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(return_value=SimpleNamespace(value=invalid_raw)),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_user_configurations",
+        AsyncMock(return_value=legacy),
+    )
+
+    resolved = await get_resolved_ai_model_configuration(
+        user_id=7,
+        organization_id=42,
+    )
+
+    assert resolved.source == "legacy_user_v1"
+    assert resolved.effective is legacy
+    assert resolved.organization_configuration is None
+    assert resolved.organization_configuration_error is not None
+    assert "dograh" in resolved.organization_configuration_error
+
+
+@pytest.mark.asyncio
+async def test_masked_raw_helper_masks_secret_fields(monkeypatch):
+    raw = {
+        "version": 2,
+        "mode": "dograh",
+        "dograh": {
+            "api_key": ["mps-real-one", "mps-real-two"],
+            "voice": "default",
+        },
+    }
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(return_value=SimpleNamespace(value=raw)),
+    )
+
+    result = await get_masked_raw_model_configuration_v2(42)
+
+    assert result["validation_error"] is None
+    assert result["value"]["dograh"]["api_key"] == [
+        mask_key("mps-real-one"),
+        mask_key("mps-real-two"),
+    ]
+    assert result["value"]["dograh"]["voice"] == "default"
+    # The stored row must not be mutated by masking.
+    assert raw["dograh"]["api_key"] == ["mps-real-one", "mps-real-two"]
+
+
+@pytest.mark.asyncio
+async def test_masked_raw_helper_returns_invalid_raw_with_error(monkeypatch):
+    invalid_raw = {
+        "version": 2,
+        "mode": "byok",
+        "byok": {
+            "mode": "pipeline",
+            "pipeline": {
+                "llm": {
+                    "provider": "openai",
+                    "api_key": "sk-real-secret",
+                    "model": "gpt-4.1",
+                },
+                # tts/stt missing -> invalid
+            },
+        },
+    }
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(return_value=SimpleNamespace(value=invalid_raw)),
+    )
+
+    result = await get_masked_raw_model_configuration_v2(42)
+
+    assert result["validation_error"] is not None
+    assert result["value"]["byok"]["pipeline"]["llm"]["api_key"] == mask_key(
+        "sk-real-secret"
+    )
 
 
 def test_masked_v2_configuration_masks_nested_service_keys():

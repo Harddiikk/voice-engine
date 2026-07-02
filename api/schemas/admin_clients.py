@@ -35,7 +35,7 @@ class AdminClientsListResponse(BaseModel):
 
 
 class RetryProvisionRequest(BaseModel):
-    """A NEW VoiceLink password — client passwords are never stored locally."""
+    """A NEW VoiceLink password; provisioning keeps an encrypted display copy."""
 
     password: str
 
@@ -118,6 +118,32 @@ class GrantCreditsResponse(BaseModel):
     granted_seconds: int
     # Balance after the grant; never None here (unmetered orgs are rejected).
     credits_seconds_remaining: Optional[int] = None
+
+
+class ClientPasswordResponse(BaseModel):
+    """The stored display copy of the client's VoiceLink portal password."""
+
+    username: Optional[str] = None
+    password: str
+
+
+class RecordPasswordRequest(BaseModel):
+    """A portal password to record (encrypted at rest, display-only).
+
+    This is our copy of the password the owner set in the VoiceLink portal —
+    recording it does NOT change the password on VoiceLink (there is no
+    upstream change-password API).
+    """
+
+    password: str = Field(..., min_length=8)
+
+
+class RecordPasswordResponse(BaseModel):
+    organization_id: int
+    stored: bool
+    # Reminder surfaced to the operator: this is a record of the portal
+    # password, not a password change on VoiceLink.
+    note: str
 
 
 class AdminKycStatusResponse(KycStatusResponse):

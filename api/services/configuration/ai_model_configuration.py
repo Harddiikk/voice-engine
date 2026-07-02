@@ -29,6 +29,7 @@ from api.schemas.ai_model_configuration import (
 from api.services.configuration.masking import (
     SERVICE_SECRET_FIELDS,
     contains_masked_key,
+    is_mask_of,
     mask_key,
     resolve_masked_api_keys,
 )
@@ -44,6 +45,18 @@ class ResolvedAIModelConfiguration:
     effective: EffectiveAIModelConfiguration
     source: AIModelConfigurationSource
     organization_configuration: OrganizationAIModelConfigurationV2 | None = None
+    # Set when a stored org v2 row exists but failed validation (we fell back
+    # to legacy for runtime safety); lets the API surface the problem.
+    organization_configuration_error: str | None = None
+
+
+@dataclass
+class OrganizationV2ConfigurationState:
+    """Stored org v2 row in all its states: valid, invalid, or absent."""
+
+    configuration: OrganizationAIModelConfigurationV2 | None = None
+    raw: dict | None = None
+    validation_error: str | None = None
 
 
 @dataclass
@@ -58,26 +71,26 @@ async def get_resolved_ai_model_configuration(
     user_id: int | None,
     organization_id: int | None,
 ) -> ResolvedAIModelConfiguration:
-    organization_configuration = await get_organization_ai_model_configuration_v2(
-        organization_id
-    )
-    if organization_configuration is not None:
+    state = await get_organization_ai_model_configuration_v2_state(organization_id)
+    if state.configuration is not None:
         return ResolvedAIModelConfiguration(
-            effective=compile_ai_model_configuration_v2(organization_configuration),
+            effective=compile_ai_model_configuration_v2(state.configuration),
             source="organization_v2",
-            organization_configuration=organization_configuration,
+            organization_configuration=state.configuration,
         )
 
     if user_id is None:
         return ResolvedAIModelConfiguration(
             effective=EffectiveAIModelConfiguration(),
             source="empty",
+            organization_configuration_error=state.validation_error,
         )
 
     legacy = await db_client.get_user_configurations(user_id)
     return ResolvedAIModelConfiguration(
         effective=legacy,
         source="legacy_user_v1" if _has_model_services(legacy) else "empty",
+        organization_configuration_error=state.validation_error,
     )
 
 
@@ -106,25 +119,53 @@ async def get_effective_ai_model_configuration_for_workflow(
     )
 
 
-async def get_organization_ai_model_configuration_v2(
+async def get_organization_ai_model_configuration_v2_state(
     organization_id: int | None,
-) -> OrganizationAIModelConfigurationV2 | None:
+) -> OrganizationV2ConfigurationState:
     if organization_id is None:
-        return None
+        return OrganizationV2ConfigurationState()
     row = await db_client.get_configuration(
         organization_id,
         OrganizationConfigurationKey.MODEL_CONFIGURATION_V2.value,
     )
     if row is None or not row.value:
-        return None
+        return OrganizationV2ConfigurationState()
     try:
-        return OrganizationAIModelConfigurationV2.model_validate(row.value)
+        return OrganizationV2ConfigurationState(
+            configuration=OrganizationAIModelConfigurationV2.model_validate(row.value),
+            raw=row.value,
+        )
     except ValidationError as exc:
         logger.warning(
             "Invalid org AI model configuration v2 for organization "
             f"{organization_id}: {exc}. Falling back to legacy configuration."
         )
-        return None
+        return OrganizationV2ConfigurationState(
+            raw=row.value,
+            validation_error=str(exc),
+        )
+
+
+async def get_organization_ai_model_configuration_v2(
+    organization_id: int | None,
+) -> OrganizationAIModelConfigurationV2 | None:
+    state = await get_organization_ai_model_configuration_v2_state(organization_id)
+    return state.configuration
+
+
+async def get_masked_raw_model_configuration_v2(
+    organization_id: int | None,
+) -> dict:
+    """Return the raw stored v2 payload (secrets masked) + its validation error.
+
+    Serves the admin "view raw payload" endpoint so an invalid stored row can
+    be inspected without leaking secrets. ``value`` is None when no row exists.
+    """
+    state = await get_organization_ai_model_configuration_v2_state(organization_id)
+    raw = copy.deepcopy(state.raw) if state.raw is not None else None
+    if raw is not None:
+        _mask_secret_fields(raw)
+    return {"value": raw, "validation_error": state.validation_error}
 
 
 async def upsert_organization_ai_model_configuration_v2(
@@ -245,10 +286,20 @@ def merge_ai_model_configuration_v2_secrets(
         incoming_key = incoming_dograh.get("api_key")
         existing_key = existing_dograh.get("api_key")
         if incoming_key and existing_key and contains_masked_key(incoming_key):
-            incoming_dograh["api_key"] = resolve_masked_api_keys(
-                incoming_key,
-                existing_key,
-            )
+            if isinstance(incoming_key, str) and isinstance(existing_key, list):
+                # The dograh form has a single string input, so a stored key
+                # list is masked down to its first entry (see
+                # _collapse_dograh_masked_api_key). A masked string coming
+                # back means "unchanged" — restore the full stored list. If
+                # it matches nothing, leave it masked so the masked-key check
+                # rejects the save instead of storing the mask literally.
+                if any(is_mask_of(incoming_key, real) for real in existing_key):
+                    incoming_dograh["api_key"] = existing_key
+            else:
+                incoming_dograh["api_key"] = resolve_masked_api_keys(
+                    incoming_key,
+                    existing_key,
+                )
 
     if incoming_dict.get("mode") == "byok" and existing_dict.get("mode") == "byok":
         _merge_byok_secret_fields(incoming_dict.get("byok"), existing_dict.get("byok"))
@@ -270,7 +321,23 @@ def mask_ai_model_configuration_v2(
         return None
     data = configuration.model_dump(mode="json", exclude_none=True)
     _mask_secret_fields(data)
+    _collapse_dograh_masked_api_key(data)
     return data
+
+
+def _collapse_dograh_masked_api_key(data: dict) -> None:
+    """Collapse a masked dograh api_key list to its first masked entry.
+
+    The dograh form renders api_key as a single string input; a masked list
+    would round-trip as a comma-joined string that matches nothing. A single
+    masked key round-trips cleanly and the merge step restores the full list.
+    """
+    dograh = data.get("dograh")
+    if not isinstance(dograh, dict):
+        return
+    api_key = dograh.get("api_key")
+    if isinstance(api_key, list) and api_key:
+        dograh["api_key"] = api_key[0]
 
 
 def convert_legacy_ai_model_configuration_to_v2(

@@ -277,6 +277,19 @@ DEFAULT_CAMPAIGN_RETRY_CONFIG = {
     "retry_on_voicemail": False,
 }
 
+# Default calling window applied to NEW campaigns created without an explicit
+# schedule_config: a daily "HH:MM-HH:MM" window (all 7 days) evaluated in
+# DEFAULT_CAMPAIGN_CALLING_TIMEZONE. Overnight windows (start > end, e.g.
+# "21:00-06:00") wrap past midnight into the next day. Set the window to ""
+# (or anything unparsable) to disable the default — new campaigns then dial
+# at any hour unless the user configures a schedule themselves.
+DEFAULT_CAMPAIGN_CALLING_WINDOW = os.getenv(
+    "DEFAULT_CAMPAIGN_CALLING_WINDOW", "09:00-21:00"
+)
+DEFAULT_CAMPAIGN_CALLING_TIMEZONE = os.getenv(
+    "DEFAULT_CAMPAIGN_CALLING_TIMEZONE", "Asia/Kolkata"
+)
+
 
 # Circuit breaker defaults for campaign call failure detection.
 # VoiceLink has no busy/no-answer statuses — unanswered calls surface as

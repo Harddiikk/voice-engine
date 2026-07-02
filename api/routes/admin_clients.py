@@ -2,9 +2,12 @@
 
 Lists every client organization (excluding the superuser's own orgs) with
 its VoiceLink provisioning state, supports retrying a failed provisioning
-with a freshly supplied password (client passwords are never stored), and
-assigns a DID by creating/updating the org's ``voicelink`` telephony
-configuration row. All endpoints require superuser privileges.
+with a freshly supplied password, reveals/records the org's stored
+(Fernet-encrypted) copy of the client's VoiceLink portal password — a
+display-only record for the owner to hand to clients; VoiceLink has no
+change-password API, so real changes happen in their portal — and assigns
+a DID by creating/updating the org's ``voicelink`` telephony configuration
+row. All endpoints require superuser privileges.
 """
 
 from typing import List, Optional
@@ -20,10 +23,13 @@ from api.schemas.admin_clients import (
     AdminKycStatusResponse,
     AssignDidRequest,
     AssignDidResponse,
+    ClientPasswordResponse,
     CreateClientRequest,
     CreateClientResponse,
     GrantCreditsRequest,
     GrantCreditsResponse,
+    RecordPasswordRequest,
+    RecordPasswordResponse,
     RetryProvisionRequest,
     RetryProvisionResponse,
 )
@@ -35,7 +41,10 @@ from api.services.voicelink_clients import (
     get_voicelink_clients_client,
     provision_voicelink_client,
 )
-from api.services.voicelink_clients.secrets import decrypt_provision_secret
+from api.services.voicelink_clients.secrets import (
+    decrypt_provision_secret,
+    encrypt_provision_secret,
+)
 from api.services.voicelink_kyc import (
     VoiceLinkKycError,
     get_kyc_client,
@@ -164,12 +173,13 @@ async def list_clients(
                     organization.voicelink_client_id != live_client_id
                     or organization.voicelink_status != VOICELINK_STATUS_PROVISIONED
                 ):
+                    # provision_secret is deliberately untouched — it is the
+                    # retained display copy of the client's portal password.
                     await db_client.update_organization_voicelink(
                         organization.id,
                         client_id=live_client_id,
                         status=VOICELINK_STATUS_PROVISIONED,
                         error=None,
-                        provision_secret=None,
                     )
             else:
                 live_state = "missing"
@@ -206,7 +216,8 @@ async def retry_provision(
     """Re-run VoiceLink client creation for an org.
 
     Uses the stored ``voicelink_username`` (or re-derives one) and the NEW
-    password supplied in the body — passwords are never stored locally.
+    password supplied in the body; provisioning keeps an encrypted copy of
+    the password as the org's display record.
     """
     organization = await db_client.get_organization_with_users(org_id)
     if organization is None:
@@ -293,12 +304,13 @@ async def create_client(
     by_id, by_username = _build_live_index(records)
     live_client_id = _match_live_client_id(organization, owner, by_id, by_username)
     if live_client_id:
+        # provision_secret is deliberately untouched — it is the retained
+        # display copy of the client's portal password.
         await db_client.update_organization_voicelink(
             org_id,
             client_id=live_client_id,
             status=VOICELINK_STATUS_PROVISIONED,
             error=None,
-            provision_secret=None,
         )
         logger.info(
             f"Superuser {user.id} linked existing VoiceLink client "
@@ -446,6 +458,78 @@ async def grant_credits(
         organization_id=org_id,
         granted_seconds=granted_seconds,
         credits_seconds_remaining=new_balance,
+    )
+
+
+@router.get("/{org_id}/password", response_model=ClientPasswordResponse)
+async def reveal_client_password(
+    org_id: int,
+    user: UserModel = Depends(get_superuser),
+) -> ClientPasswordResponse:
+    """Reveal the stored copy of the client's VoiceLink portal password.
+
+    This is the display-only record (dialing/KYC use reseller credentials);
+    404 ``no_stored_password`` when nothing is stored, the encryption key is
+    unset, or the stored token fails to decrypt.
+    """
+    organization = await db_client.get_organization_by_id(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    password = decrypt_provision_secret(organization.voicelink_provision_secret)
+    if not password:
+        raise HTTPException(status_code=404, detail="no_stored_password")
+
+    logger.info(
+        f"Superuser {user.id} revealed the stored VoiceLink password "
+        f"for org {org_id}"
+    )
+    return ClientPasswordResponse(
+        username=organization.voicelink_username,
+        password=password,
+    )
+
+
+@router.post("/{org_id}/password", response_model=RecordPasswordResponse)
+async def record_client_password(
+    org_id: int,
+    request: RecordPasswordRequest,
+    user: UserModel = Depends(get_superuser),
+) -> RecordPasswordResponse:
+    """Record an encrypted display copy of the client's portal password.
+
+    VoiceLink has NO change-password API — real changes happen in their
+    portal. This only updates our stored record so the owner can hand the
+    password to the client later; it does NOT change it on VoiceLink.
+    """
+    organization = await db_client.get_organization_by_id(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    encrypted = encrypt_provision_secret(request.password)
+    if encrypted is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "VOICELINK_PROVISION_KEY is not configured — the password "
+                "cannot be stored"
+            ),
+        )
+
+    await db_client.update_organization_voicelink(
+        org_id, provision_secret=encrypted
+    )
+    logger.info(
+        f"Superuser {user.id} recorded a VoiceLink portal password "
+        f"for org {org_id}"
+    )
+    return RecordPasswordResponse(
+        organization_id=org_id,
+        stored=True,
+        note=(
+            "Stored as a record of the portal password — this does not "
+            "change the password on VoiceLink."
+        ),
     )
 
 
