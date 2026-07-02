@@ -449,7 +449,22 @@ async def grant_credits(
         )
 
     granted_seconds = request.minutes * 60
-    new_balance = await db_client.add_call_seconds(org_id, granted_seconds)
+    # Credit + ledger row in one transaction (kind=grant, attributed to the
+    # superuser). Returns None only if the org turned unmetered concurrently.
+    new_balance = await db_client.grant_credits_tx(
+        org_id,
+        granted_seconds,
+        created_by=user.id,
+        description=f"Admin grant: {request.minutes} minutes",
+    )
+    if new_balance is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Organization is unmetered (unlimited credits); granting "
+                "credits would convert it to a metered balance. Refusing."
+            ),
+        )
     logger.info(
         f"Superuser {user.id} granted {request.minutes} minutes "
         f"({granted_seconds}s) to org {org_id}; balance now {new_balance}s"

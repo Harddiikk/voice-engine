@@ -729,6 +729,186 @@ class TestProcessBatchCancellation:
             )
 
 
+class TestDispatchCallDialFailure:
+    """Dial-init failure must settle the run's credit hold inline (actual=0)."""
+
+    @pytest.mark.asyncio
+    async def test_dial_failure_settles_credit_hold_inline(self):
+        dispatcher = CampaignCallDispatcher()
+
+        campaign = MagicMock()
+        campaign.id = 42
+        campaign.workflow_id = 7
+        campaign.organization_id = 4
+        campaign.created_by = 1
+        campaign.telephony_configuration_id = 170
+
+        queued_run = MagicMock()
+        queued_run.id = 11
+        queued_run.source_uuid = "u1"
+        queued_run.context_variables = {"phone_number": "+15550001"}
+
+        provider = MagicMock()
+        provider.PROVIDER_NAME = "voicelink"
+        provider.WEBHOOK_ENDPOINT = "voicelink"
+        provider.initiate_call = AsyncMock(side_effect=RuntimeError("dial failed"))
+
+        created_run = MagicMock()
+        created_run.id = 55
+        created_run.logs = {}
+
+        refetched_run = MagicMock()
+        refetched_run.id = 55
+        refetched_run.reserved_credit_seconds = 600
+        refetched_run.initial_context = {"called_number": "+15550001"}
+        refetched_run.usage_info = {}
+        refetched_run.cost_info = {}
+
+        quota_ok = MagicMock()
+        quota_ok.has_quota = True
+
+        settle = AsyncMock(return_value="settled")
+
+        with (
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.db_client"
+            ) as mock_db,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.rate_limiter"
+            ) as mock_rl,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.circuit_breaker"
+            ) as mock_cb,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher."
+                "authorize_workflow_run_start",
+                new=AsyncMock(return_value=quota_ok),
+            ),
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.get_backend_endpoints",
+                new=AsyncMock(return_value=("https://api.test", "m")),
+            ),
+            patch(
+                "api.services.credits.reservation.settle_workflow_run_credits",
+                new=settle,
+            ),
+            patch.object(
+                dispatcher,
+                "get_provider_for_campaign",
+                new=AsyncMock(return_value=provider),
+            ),
+            patch.object(
+                dispatcher,
+                "acquire_from_number",
+                new=AsyncMock(return_value="+15551234567#0"),
+            ),
+        ):
+            mock_db.get_workflow_by_id = AsyncMock(return_value=MagicMock(id=7))
+            mock_db.create_workflow_run = AsyncMock(return_value=created_run)
+            mock_db.update_workflow_run = AsyncMock()
+            mock_db.get_workflow_run_by_id = AsyncMock(return_value=refetched_run)
+
+            mock_rl.bare_from_number = MagicMock(return_value="+15551234567")
+            mock_rl.store_workflow_slot_mapping = AsyncMock()
+            mock_rl.store_workflow_from_number_mapping = AsyncMock()
+            mock_rl.release_concurrent_slot = AsyncMock()
+            mock_rl.release_from_number = AsyncMock()
+            mock_rl.get_workflow_slot_mapping = AsyncMock(return_value=None)
+            mock_rl.get_workflow_from_number_mapping = AsyncMock(return_value=None)
+            mock_rl.delete_workflow_slot_mapping = AsyncMock()
+            mock_rl.delete_workflow_from_number_mapping = AsyncMock()
+            mock_cb.record_and_evaluate = AsyncMock()
+
+            with pytest.raises(RuntimeError, match="dial failed"):
+                await dispatcher.dispatch_call(queued_run, campaign, "slot-1")
+
+        # The refetched run (with its reserved hold) was settled for org 4.
+        settle.assert_awaited_once_with(4, refetched_run)
+        mock_db.get_workflow_run_by_id.assert_awaited_once_with(55)
+
+    @pytest.mark.asyncio
+    async def test_dial_failure_settle_errors_do_not_mask_dial_error(self):
+        """A settle hiccup is swallowed; the dial error still propagates."""
+        dispatcher = CampaignCallDispatcher()
+
+        campaign = MagicMock()
+        campaign.id = 42
+        campaign.workflow_id = 7
+        campaign.organization_id = 4
+        campaign.created_by = 1
+        campaign.telephony_configuration_id = 170
+
+        queued_run = MagicMock()
+        queued_run.id = 11
+        queued_run.source_uuid = "u1"
+        queued_run.context_variables = {"phone_number": "+15550001"}
+
+        provider = MagicMock()
+        provider.PROVIDER_NAME = "voicelink"
+        provider.WEBHOOK_ENDPOINT = "voicelink"
+        provider.initiate_call = AsyncMock(side_effect=RuntimeError("dial failed"))
+
+        created_run = MagicMock()
+        created_run.id = 55
+        created_run.logs = {}
+
+        quota_ok = MagicMock()
+        quota_ok.has_quota = True
+
+        with (
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.db_client"
+            ) as mock_db,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.rate_limiter"
+            ) as mock_rl,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.circuit_breaker"
+            ) as mock_cb,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher."
+                "authorize_workflow_run_start",
+                new=AsyncMock(return_value=quota_ok),
+            ),
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.get_backend_endpoints",
+                new=AsyncMock(return_value=("https://api.test", "m")),
+            ),
+            patch(
+                "api.services.credits.reservation.settle_workflow_run_credits",
+                new=AsyncMock(side_effect=RuntimeError("settle broke")),
+            ),
+            patch.object(
+                dispatcher,
+                "get_provider_for_campaign",
+                new=AsyncMock(return_value=provider),
+            ),
+            patch.object(
+                dispatcher,
+                "acquire_from_number",
+                new=AsyncMock(return_value="+15551234567#0"),
+            ),
+        ):
+            mock_db.get_workflow_by_id = AsyncMock(return_value=MagicMock(id=7))
+            mock_db.create_workflow_run = AsyncMock(return_value=created_run)
+            mock_db.update_workflow_run = AsyncMock()
+            mock_db.get_workflow_run_by_id = AsyncMock(return_value=MagicMock(id=55))
+
+            mock_rl.bare_from_number = MagicMock(return_value="+15551234567")
+            mock_rl.store_workflow_slot_mapping = AsyncMock()
+            mock_rl.store_workflow_from_number_mapping = AsyncMock()
+            mock_rl.release_concurrent_slot = AsyncMock()
+            mock_rl.release_from_number = AsyncMock()
+            mock_rl.get_workflow_slot_mapping = AsyncMock(return_value=None)
+            mock_rl.get_workflow_from_number_mapping = AsyncMock(return_value=None)
+            mock_rl.delete_workflow_slot_mapping = AsyncMock()
+            mock_rl.delete_workflow_from_number_mapping = AsyncMock()
+            mock_cb.record_and_evaluate = AsyncMock()
+
+            with pytest.raises(RuntimeError, match="dial failed"):
+                await dispatcher.dispatch_call(queued_run, campaign, "slot-1")
+
+
 class TestProcessBatchEdgeCases:
     """Edge case tests for process_batch."""
 

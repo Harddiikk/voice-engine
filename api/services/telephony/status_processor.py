@@ -183,11 +183,30 @@ async def _process_status_update(workflow_run_id: int, status: StatusCallbackReq
                 )
 
         if workflow_run.state != WorkflowRunState.COMPLETED.value:
-            await db_client.update_workflow_run(
-                run_id=workflow_run_id,
-                is_completed=True,
-                state=WorkflowRunState.COMPLETED.value,
+            # A 'completed' callback for a run whose pipeline never started
+            # (still INITIALIZED, e.g. carrier-side completion without a
+            # media connection) gets no PROCESS_WORKFLOW_COMPLETION — so the
+            # post-call integrations (which settle the credit hold) must be
+            # enqueued here, with the callback duration as the run's usage.
+            # NOT for RUNNING runs: the pipeline's own completion handles it.
+            should_run_post_call_integrations = (
+                workflow_run.state == WorkflowRunState.INITIALIZED.value
+                and not workflow_run.is_completed
             )
+            update_kwargs = {
+                "run_id": workflow_run_id,
+                "is_completed": True,
+                "state": WorkflowRunState.COMPLETED.value,
+            }
+            if should_run_post_call_integrations:
+                update_kwargs["usage_info"] = {
+                    "call_duration_seconds": _duration_seconds(status.duration)
+                }
+            await db_client.update_workflow_run(**update_kwargs)
+            if should_run_post_call_integrations:
+                await _enqueue_integrations_for_unconnected_run(
+                    workflow_run_id, "completed"
+                )
 
     elif normalized_status in TERMINAL_NOT_CONNECTED_STATUSES:
         logger.warning(

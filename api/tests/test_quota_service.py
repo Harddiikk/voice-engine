@@ -448,17 +448,14 @@ async def test_run_reserves_and_passes_when_mps_disabled(monkeypatch):
         AsyncMock(return_value=_workflow()),
     )
     reserve = AsyncMock(return_value=600)
-    store = AsyncMock()
-    monkeypatch.setattr(quota_service, "reserve_call_credits", reserve)
-    monkeypatch.setattr(quota_service, "_store_reserved_credit_seconds", store)
+    monkeypatch.setattr(quota_service, "reserve_call_credits_for_run", reserve)
 
     result = await quota_service.authorize_workflow_run_start(
         workflow_id=7, workflow_run_id=5
     )
 
     assert result.has_quota is True
-    reserve.assert_awaited_once_with(42, quota_service.CREDIT_RESERVATION_SECONDS)
-    store.assert_awaited_once_with(5, 600)
+    reserve.assert_awaited_once_with(42, 5, quota_service.CREDIT_RESERVATION_SECONDS)
 
 
 @pytest.mark.asyncio
@@ -469,7 +466,7 @@ async def test_run_insufficient_credits_returns_402_code(monkeypatch):
         AsyncMock(return_value=_workflow()),
     )
     monkeypatch.setattr(
-        quota_service, "reserve_call_credits", AsyncMock(return_value=None)
+        quota_service, "reserve_call_credits_for_run", AsyncMock(return_value=None)
     )
 
     result = await quota_service.authorize_workflow_run_start(
@@ -521,9 +518,8 @@ async def test_mps_client_not_called_when_disabled(monkeypatch):
         AsyncMock(return_value=_workflow()),
     )
     monkeypatch.setattr(
-        quota_service, "reserve_call_credits", AsyncMock(return_value=0)
+        quota_service, "reserve_call_credits_for_run", AsyncMock(return_value=0)
     )
-    monkeypatch.setattr(quota_service, "_store_reserved_credit_seconds", AsyncMock())
     mps_authorize = AsyncMock()
     monkeypatch.setattr(
         quota_service.mps_service_key_client,

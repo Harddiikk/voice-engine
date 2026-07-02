@@ -139,10 +139,13 @@ CAMPAIGN_SPEND_RATE_INR_PER_MINUTE = float(
     os.getenv("CAMPAIGN_SPEND_RATE_INR_PER_MINUTE", "8")
 )
 
-# Telephony marketplace: setup cost (in call-minutes deducted from the credit
-# balance) to claim a phone number. PLACEHOLDER — founder sets the real price.
-# 0 = free to claim. Unmetered (unlimited) orgs are never charged.
-NUMBER_SETUP_MINUTES = int(os.getenv("NUMBER_SETUP_MINUTES", "0"))
+# Telephony marketplace: a phone number is priced in INR and charged against
+# the credit balance at the credit rate (1 credit = 1 call-minute).
+# NUMBER_SETUP_SECONDS is the derived deduction. Unmetered (unlimited) orgs
+# are never charged.
+NUMBER_PRICE_INR = int(os.getenv("NUMBER_PRICE_INR", "500"))
+CREDIT_RATE_INR_PER_MINUTE = float(os.getenv("CREDIT_RATE_INR_PER_MINUTE", "8"))
+NUMBER_SETUP_SECONDS = int(round(NUMBER_PRICE_INR / CREDIT_RATE_INR_PER_MINUTE * 60))
 
 # Single-ledger billing. When False (default) the upstream Dograh MPS model
 # billing is OFF and the local call-minute credit ledger

@@ -43,6 +43,7 @@ from api.tasks.campaign_tasks import (
     process_campaign_batch,
     sync_campaign_source,
 )
+from api.tasks.credit_sweeper import settle_leaked_credit_holds
 from api.tasks.knowledge_base_processing import process_knowledge_base_document
 from api.tasks.run_integrations import run_integrations_post_workflow_run
 from api.tasks.s3_upload import upload_voicemail_audio_to_s3
@@ -59,11 +60,15 @@ class WorkerSettings:
         process_campaign_batch,
         process_knowledge_base_document,
         retry_pending_voicelink_provisioning,
+        settle_leaked_credit_holds,
     ]
     # Heal stuck VoiceLink provisioning every 15 minutes so a reseller recharge
     # auto-provisions all pending clients with no manual retries.
+    # Settle leaked credit reservation holds every 10 minutes (offset from the
+    # provisioning sweep) so a missed post-call settle can't strand a hold.
     cron_jobs = [
-        cron(retry_pending_voicelink_provisioning, minute={0, 15, 30, 45})
+        cron(retry_pending_voicelink_provisioning, minute={0, 15, 30, 45}),
+        cron(settle_leaked_credit_holds, minute={5, 15, 25, 35, 45, 55}),
     ]
     redis_settings = REDIS_SETTINGS
     max_jobs = 10

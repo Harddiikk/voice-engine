@@ -170,6 +170,10 @@ class OrganizationModel(Base):
     # See services/voicelink_clients/secrets.py.
     voicelink_provision_secret = Column(Text, nullable=True)
 
+    # When the org first purchased a marketplace DID (reserved for the DID
+    # purchase workstream; written by that flow, not by the money core).
+    voicelink_did_purchased_at = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     users = relationship(
         "UserModel",
@@ -582,6 +586,12 @@ class WorkflowRunModel(Base):
     logs = Column(JSON, nullable=False, default=dict, server_default=text("'{}'::json"))
     annotations = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    # Credit reservation hold taken at dial authorization (money core). NULL =
+    # no hold was taken (unmetered org / pre-ledger run). ``credits_settled_at``
+    # is the settlement CAS marker: set exactly once when the hold is released
+    # and the actual duration charged — a retried settle no-ops on it.
+    reserved_credit_seconds = Column(Integer, nullable=True)
+    credits_settled_at = Column(DateTime(timezone=True), nullable=True)
     campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True)
     campaign = relationship("CampaignModel")
     queued_run_id = Column(Integer, ForeignKey("queued_runs.id"), nullable=True)
@@ -609,6 +619,14 @@ class WorkflowRunModel(Base):
         ),
         Index("idx_workflow_runs_workflow_id", "workflow_id"),
         Index("idx_workflow_runs_campaign_id", "campaign_id"),
+        # Cheap scan target for the credit leak sweeper: only unsettled holds.
+        Index(
+            "ix_workflow_runs_unsettled_holds",
+            "created_at",
+            postgresql_where=text(
+                "reserved_credit_seconds IS NOT NULL AND credits_settled_at IS NULL"
+            ),
+        ),
     )
 
 
@@ -1375,6 +1393,50 @@ class KnowledgeBaseChunkModel(Base):
             postgresql_with={"lists": 100},  # Adjust based on dataset size
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+    )
+
+
+class CreditLedgerModel(Base):
+    """Append-only ledger of every mutation to an org's call-seconds balance.
+
+    One row per applied balance change (never for no-ops): reserve /
+    settle_release / settle_charge / leak_sweep / topup / grant /
+    number_purchase / refund / adjustment. ``delta_seconds`` is the APPLIED
+    delta (signed), ``balance_after`` the balance the mutation left behind, so
+    SUM(delta_seconds) over an org's rows equals its current balance (given an
+    opening ``adjustment`` row for pre-ledger history). ``idempotency_key``
+    is UNIQUE — a retried money mutation inserts a duplicate key, hits the
+    constraint, and rolls back instead of double-applying. Unmetered (NULL
+    balance) orgs never get rows: their balance is never mutated.
+    """
+
+    __tablename__ = "credit_ledger"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    kind = Column(String(24), nullable=False)
+    delta_seconds = Column(Integer, nullable=False)  # signed applied delta
+    balance_after = Column(Integer, nullable=True)
+    workflow_run_id = Column(
+        Integer, ForeignKey("workflow_runs.id"), nullable=True, index=True
+    )
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=True)
+    payment_transaction_id = Column(
+        Integer, ForeignKey("payment_transactions.id"), nullable=True
+    )
+    idempotency_key = Column(String(80), nullable=True, unique=True)
+    description = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("ix_credit_ledger_org_created", "organization_id", "created_at"),
     )
 
 

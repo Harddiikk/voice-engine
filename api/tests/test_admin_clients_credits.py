@@ -85,14 +85,16 @@ def test_grant_credits_adds_seconds_and_returns_new_balance():
         db.get_organization_by_id = AsyncMock(
             return_value=_org(free_call_seconds_remaining=120)
         )
-        db.add_call_seconds = AsyncMock(return_value=720)
+        db.grant_credits_tx = AsyncMock(return_value=720)
 
         response = client.post(
             "/admin/clients/5/grant-credits", json={"minutes": 10}
         )
 
     assert response.status_code == 200
-    db.add_call_seconds.assert_awaited_once_with(5, 600)  # minutes → seconds
+    db.grant_credits_tx.assert_awaited_once_with(
+        5, 600, created_by=1, description="Admin grant: 10 minutes"
+    )  # minutes → seconds, attributed to the superuser
     body = response.json()
     assert body["organization_id"] == 5
     assert body["granted_seconds"] == 600
@@ -107,7 +109,7 @@ def test_grant_credits_tops_up_depleted_zero_balance():
         db.get_organization_by_id = AsyncMock(
             return_value=_org(free_call_seconds_remaining=0)
         )
-        db.add_call_seconds = AsyncMock(return_value=60)
+        db.grant_credits_tx = AsyncMock(return_value=60)
 
         response = client.post(
             "/admin/clients/5/grant-credits", json={"minutes": 1}
@@ -126,7 +128,7 @@ def test_grant_credits_409_for_unmetered_org():
         db.get_organization_by_id = AsyncMock(
             return_value=_org(free_call_seconds_remaining=None)
         )
-        db.add_call_seconds = AsyncMock()
+        db.grant_credits_tx = AsyncMock()
 
         response = client.post(
             "/admin/clients/5/grant-credits", json={"minutes": 10}
@@ -134,7 +136,26 @@ def test_grant_credits_409_for_unmetered_org():
 
     assert response.status_code == 409
     assert "unmetered" in response.json()["detail"]
-    db.add_call_seconds.assert_not_awaited()
+    db.grant_credits_tx.assert_not_awaited()
+
+
+def test_grant_credits_409_when_org_turns_unmetered_concurrently():
+    """The tx itself refuses (returns None) if the org went unmetered mid-flight."""
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(free_call_seconds_remaining=120)
+        )
+        db.grant_credits_tx = AsyncMock(return_value=None)
+
+        response = client.post(
+            "/admin/clients/5/grant-credits", json={"minutes": 10}
+        )
+
+    assert response.status_code == 409
+    assert "unmetered" in response.json()["detail"]
 
 
 def test_grant_credits_404_for_unknown_org():

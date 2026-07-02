@@ -54,6 +54,9 @@ async def get_balance(user: UserModel = Depends(get_user)):
     return {
         "balance_seconds": balance,
         "unlimited": balance is None,
+        # Seconds currently held by unsettled in-flight calls (released on
+        # settlement; the visible balance already excludes them).
+        "on_hold_seconds": await db_client.sum_on_hold_seconds(org),
         # PayU is the active gateway; keep Razorpay as an OR so an env with only
         # Razorpay keys still surfaces the packs.
         "configured": payu_client.is_configured() or razorpay_client.is_configured(),
@@ -129,13 +132,17 @@ async def verify_payment(body: VerifyRequest, user: UserModel = Depends(get_user
         logger.warning(f"Razorpay signature mismatch for order {body.razorpay_order_id}")
         raise HTTPException(status_code=400, detail="signature_verification_failed")
 
-    await db_client.mark_transaction_paid(
+    # Atomic paid-CAS + credit + ledger row: a concurrent verify can't
+    # double-credit, and a crash can't mark paid without crediting.
+    outcome = await db_client.topup_paid_tx(
         body.razorpay_order_id, body.razorpay_payment_id
     )
-    balance = await db_client.add_call_seconds(org, txn.seconds)
+    balance = await db_client.get_free_call_seconds_remaining(org)
+    if outcome == "already":
+        return {"ok": True, "balance_seconds": balance, "already": True}
     logger.info(
         f"Razorpay top-up: org {org} credited {txn.seconds}s "
-        f"(order {body.razorpay_order_id}); balance now {balance}"
+        f"(order {body.razorpay_order_id}, outcome={outcome}); balance now {balance}"
     )
     return {"ok": True, "balance_seconds": balance}
 
@@ -154,6 +161,35 @@ async def list_transactions(user: UserModel = Depends(get_user)):
             "created_at": t.created_at,
         }
         for t in txns
+    ]
+
+
+@router.get("/ledger")
+async def list_ledger(
+    user: UserModel = Depends(get_user),
+    limit: int = 50,
+    offset: int = 0,
+    kind: Optional[str] = None,
+):
+    """The org's credit ledger (every balance mutation), newest first."""
+    org = _org(user)
+    entries = await db_client.list_ledger_entries(
+        org,
+        limit=max(1, min(int(limit), 200)),
+        offset=max(0, int(offset)),
+        kind=kind,
+    )
+    return [
+        {
+            "id": e.id,
+            "kind": e.kind,
+            "delta_seconds": e.delta_seconds,
+            "balance_after": e.balance_after,
+            "workflow_run_id": e.workflow_run_id,
+            "description": e.description,
+            "created_at": e.created_at,
+        }
+        for e in entries
     ]
 
 
@@ -291,16 +327,16 @@ async def _apply_payu_payment(params: dict) -> str:
         amount_ok = False
 
     if status == "success" and amount_ok:
-        await db_client.mark_transaction_paid(txnid, params.get("mihpayid") or "payu")
-        # Never convert an unlimited (NULL) org to metered — skip crediting it.
-        current = await db_client.get_free_call_seconds_remaining(txn.organization_id)
-        if current is not None:
-            balance = await db_client.add_call_seconds(txn.organization_id, txn.seconds)
-        else:
-            balance = "unlimited (not credited)"
+        # Atomic paid-CAS + credit + ledger row. Unmetered (NULL) orgs are
+        # marked paid but never credited (would convert unlimited to metered).
+        outcome = await db_client.topup_paid_tx(
+            txnid, params.get("mihpayid") or "payu"
+        )
+        if outcome == "already":
+            return "already"
         logger.info(
             f"PayU payment ok: org {txn.organization_id} +{txn.seconds}s "
-            f"(txnid {txnid}); balance now {balance}"
+            f"(txnid {txnid}, outcome={outcome})"
         )
         return "success"
 

@@ -7,7 +7,7 @@ GET /numbers (available pool) · GET /my-numbers (org's assigned) · POST /buy
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.constants import NUMBER_SETUP_MINUTES
+from api.constants import NUMBER_PRICE_INR, NUMBER_SETUP_SECONDS
 from api.db import db_client
 from api.db.models import UserModel
 from api.services import telephony_marketplace as mkt
@@ -34,7 +34,8 @@ async def available_numbers(user: UserModel = Depends(get_user)):
     _org(user)
     return {
         "numbers": await mkt.list_available_numbers(),
-        "setup_seconds": NUMBER_SETUP_MINUTES * 60,
+        "price_inr": NUMBER_PRICE_INR,
+        "setup_seconds": NUMBER_SETUP_SECONDS,
     }
 
 
@@ -61,27 +62,42 @@ async def buy_number(body: BuyNumberRequest, user: UserModel = Depends(get_user)
     # Never trust the client-supplied did_id: it MUST be in the reseller's
     # available pool (prevents grabbing an arbitrary / another org's DID).
     available = await mkt.list_available_numbers()
-    if not any(
-        n.get("did_id") is not None and int(n["did_id"]) == body.did_id
-        for n in available
-    ):
+    did = next(
+        (
+            n
+            for n in available
+            if n.get("did_id") is not None and int(n["did_id"]) == body.did_id
+        ),
+        None,
+    )
+    if did is None:
         raise HTTPException(status_code=409, detail="number_unavailable")
+    did_number = did.get("did_number") or str(body.did_id)
 
-    # Charge FIRST, atomically + conditionally (race-safe), so concurrent buys
-    # can't double-spend. Unlimited (NULL) orgs and zero-cost are never charged.
-    cost = NUMBER_SETUP_MINUTES * 60
-    charged = False
-    if cost > 0 and (await db_client.get_free_call_seconds_remaining(org)) is not None:
-        if not await db_client.try_charge_call_seconds(org, cost):
-            raise HTTPException(status_code=402, detail="insufficient_credits")
-        charged = True
+    # Charge FIRST, atomically + conditionally (race-safe) with its ledger row,
+    # so concurrent buys can't double-spend. Unlimited (NULL) orgs and
+    # zero-cost are never charged ('unmetered').
+    cost = NUMBER_SETUP_SECONDS
+    charge = await db_client.charge_purchase_tx(
+        org,
+        cost,
+        kind="number_purchase",
+        description=f"Phone number {did_number} — ₹{NUMBER_PRICE_INR}",
+    )
+    if charge is None:
+        raise HTTPException(status_code=402, detail="insufficient_credits")
+    charged = isinstance(charge, int)
 
     # Assign the DID; refund the charge if the external map fails.
     try:
         await mkt.assign_number(client_id, body.did_id)
     except VoiceLinkClientError as e:
         if charged:
-            await db_client.add_call_seconds(org, cost)
+            await db_client.refund_tx(
+                org,
+                cost,
+                description=f"Refund: phone number {did_number} assignment failed",
+            )
         raise HTTPException(status_code=502, detail=f"assign_failed: {e}")
 
     new_balance = await db_client.get_free_call_seconds_remaining(org)

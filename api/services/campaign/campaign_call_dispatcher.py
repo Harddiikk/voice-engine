@@ -456,6 +456,26 @@ class CampaignCallDispatcher:
                 },
             )
 
+            # The dial never happened, so no telephony callback / post-call
+            # task will ever settle this run's credit hold — settle it inline
+            # (actual usage 0) or the reservation leaks until the sweeper.
+            # Best-effort: a settle hiccup must not mask the dial error.
+            try:
+                from api.services.credits.reservation import (
+                    settle_workflow_run_credits,
+                )
+
+                failed_run = await db_client.get_workflow_run_by_id(workflow_run.id)
+                if failed_run is not None:
+                    await settle_workflow_run_credits(
+                        campaign.organization_id, failed_run
+                    )
+            except Exception as settle_exc:
+                logger.warning(
+                    f"Credit settle after dial-init failure failed for run "
+                    f"{workflow_run.id}: {settle_exc}"
+                )
+
             # Record call initiation failure in circuit breaker
             await circuit_breaker.record_and_evaluate(
                 campaign.id,

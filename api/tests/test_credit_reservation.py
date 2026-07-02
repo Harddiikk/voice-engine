@@ -1,20 +1,76 @@
-"""Credit reservation + reconcile: reserve, insufficient, unmetered, settle."""
+"""Credit reservation + settlement service logic (the _tx layer is mocked).
+
+Covers: run-scoped reserve (unmetered / sufficient / insufficient / retried),
+the legacy run-less reserve, legacy reconcile, and settle_workflow_run_credits
+(column-vs-JSON reserved fallback, legacy JSON settled guard, description
+formatting, origin passthrough, already/settled outcomes).
+"""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from api.db.credit_ledger_client import ALREADY_APPLIED
 from api.services.credits import reservation
 from api.services.credits.reservation import (
     CREDITS_SETTLED_KEY,
     RESERVED_CREDIT_SECONDS_KEY,
     reconcile_call_credits,
     reserve_call_credits,
+    reserve_call_credits_for_run,
     settle_workflow_run_credits,
 )
 
 
 def _patch(method, **kw):
     return patch.object(reservation.db_client, method, new=AsyncMock(**kw))
+
+
+# ======== reserve_call_credits_for_run (run-scoped, single-tx) ========
+
+
+async def test_reserve_for_run_unmetered_returns_zero_and_never_reserves():
+    tx = AsyncMock(return_value=600)
+    with _patch("get_free_call_seconds_remaining", return_value=None), patch.object(
+        reservation.db_client, "reserve_run_credits_tx", new=tx
+    ):
+        assert await reserve_call_credits_for_run(1, 9, 600) == 0
+    tx.assert_not_awaited()
+
+
+async def test_reserve_for_run_metered_sufficient_returns_est():
+    tx = AsyncMock(return_value=600)
+    with _patch("get_free_call_seconds_remaining", return_value=1000), patch.object(
+        reservation.db_client, "reserve_run_credits_tx", new=tx
+    ):
+        assert await reserve_call_credits_for_run(1, 9, 600) == 600
+    tx.assert_awaited_once_with(1, 9, 600)
+
+
+async def test_reserve_for_run_metered_insufficient_returns_none():
+    with _patch("get_free_call_seconds_remaining", return_value=100), _patch(
+        "reserve_run_credits_tx", return_value=None
+    ):
+        assert await reserve_call_credits_for_run(1, 9, 600) is None
+
+
+async def test_reserve_for_run_retried_authorization_is_idempotent():
+    """The idempotency key already exists → the hold is already in place."""
+    with _patch("get_free_call_seconds_remaining", return_value=1000), _patch(
+        "reserve_run_credits_tx", return_value=ALREADY_APPLIED
+    ):
+        assert await reserve_call_credits_for_run(1, 9, 600) == 600
+
+
+async def test_reserve_for_run_zero_estimate_is_free():
+    tx = AsyncMock()
+    with _patch("get_free_call_seconds_remaining", return_value=1000), patch.object(
+        reservation.db_client, "reserve_run_credits_tx", new=tx
+    ):
+        assert await reserve_call_credits_for_run(1, 9, 0) == 0
+    tx.assert_not_awaited()
+
+
+# ======== reserve_call_credits (legacy run-less) ========
 
 
 async def test_reserve_unmetered_returns_zero_and_never_charges():
@@ -38,6 +94,9 @@ async def test_reserve_metered_insufficient_returns_none():
         "try_charge_call_seconds", return_value=False
     ):
         assert await reserve_call_credits(1, 600) is None
+
+
+# ======== reconcile_call_credits (legacy) ========
 
 
 async def test_reconcile_metered_releases_hold_then_charges_actual():
@@ -69,48 +128,87 @@ async def test_reconcile_swallows_errors():
         await reconcile_call_credits(1, 0, 10)  # must not raise
 
 
-async def test_settle_reads_reserved_and_duration_off_run():
-    run = SimpleNamespace(
-        id=9,
-        initial_context={RESERVED_CREDIT_SECONDS_KEY: 600},
+# ======== settle_workflow_run_credits ========
+
+
+def _run(**overrides):
+    defaults = {
+        "id": 9,
+        "reserved_credit_seconds": None,
+        "initial_context": {},
+        "usage_info": {},
+        "cost_info": {},
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+async def test_settle_prefers_reserved_column_over_json():
+    run = _run(
+        reserved_credit_seconds=600,
+        initial_context={RESERVED_CREDIT_SECONDS_KEY: 450, "called_number": "+9111"},
         usage_info={"call_duration_seconds": 130},
-        cost_info={},
     )
-    rec = AsyncMock()
-    with patch.object(reservation, "reconcile_call_credits", new=rec), _patch(
-        "update_workflow_run"
-    ):
+    tx = AsyncMock(return_value="settled")
+    with patch.object(reservation.db_client, "settle_run_credits_tx", new=tx):
+        assert await settle_workflow_run_credits(1, run) == "settled"
+    tx.assert_awaited_once_with(
+        1, 9, 600, 130, origin="settle", description="Call to +9111 — 2m 10s"
+    )
+
+
+async def test_settle_falls_back_to_json_reserved_for_legacy_runs():
+    run = _run(
+        initial_context={RESERVED_CREDIT_SECONDS_KEY: 600},
+        usage_info={"call_duration_seconds": 95},
+    )
+    tx = AsyncMock(return_value="settled")
+    with patch.object(reservation.db_client, "settle_run_credits_tx", new=tx):
         await settle_workflow_run_credits(1, run)
-    rec.assert_awaited_once_with(1, 600, 130)
+    assert tx.await_args.args[:4] == (1, 9, 600, 95)
 
 
-async def test_settle_is_idempotent_when_already_settled():
-    run = SimpleNamespace(
-        id=9,
+async def test_settle_skips_legacy_json_settled_runs():
+    run = _run(
         initial_context={RESERVED_CREDIT_SECONDS_KEY: 600, CREDITS_SETTLED_KEY: True},
         usage_info={"call_duration_seconds": 130},
-        cost_info={},
     )
-    rec = AsyncMock()
-    upd = AsyncMock()
-    with patch.object(reservation, "reconcile_call_credits", new=rec), patch.object(
-        reservation.db_client, "update_workflow_run", new=upd
-    ):
-        await settle_workflow_run_credits(1, run)
-    rec.assert_not_awaited()  # already settled — a retry must not double-charge
-    upd.assert_not_awaited()
+    tx = AsyncMock()
+    with patch.object(reservation.db_client, "settle_run_credits_tx", new=tx):
+        assert await settle_workflow_run_credits(1, run) == ALREADY_APPLIED
+    tx.assert_not_awaited()
 
 
-async def test_settle_marks_run_settled_after_reconcile():
-    run = SimpleNamespace(
-        id=9,
-        initial_context={RESERVED_CREDIT_SECONDS_KEY: 600},
-        usage_info={"call_duration_seconds": 130},
-        cost_info={},
+async def test_settle_returns_already_from_tx_cas():
+    """A retried settle loses the credits_settled_at CAS — no double-charge."""
+    run = _run(reserved_credit_seconds=600, usage_info={"call_duration_seconds": 130})
+    with _patch("settle_run_credits_tx", return_value=ALREADY_APPLIED):
+        assert await settle_workflow_run_credits(1, run) == ALREADY_APPLIED
+
+
+async def test_settle_duration_falls_back_to_cost_info():
+    run = _run(
+        reserved_credit_seconds=600,
+        cost_info={"call_duration_seconds": 61},
     )
-    upd = AsyncMock()
-    with patch.object(reservation, "reconcile_call_credits", new=AsyncMock()), patch.object(
-        reservation.db_client, "update_workflow_run", new=upd
-    ):
+    tx = AsyncMock(return_value="settled")
+    with patch.object(reservation.db_client, "settle_run_credits_tx", new=tx):
         await settle_workflow_run_credits(1, run)
-    upd.assert_awaited_once_with(9, initial_context={CREDITS_SETTLED_KEY: True})
+    assert tx.await_args.args[3] == 61
+    assert tx.await_args.kwargs["description"] == "Call to ? — 1m 01s"
+
+
+async def test_settle_passes_origin_through():
+    run = _run(reserved_credit_seconds=600)
+    tx = AsyncMock(return_value="settled")
+    with patch.object(reservation.db_client, "settle_run_credits_tx", new=tx):
+        await settle_workflow_run_credits(1, run, origin="sweeper")
+    assert tx.await_args.kwargs["origin"] == "sweeper"
+
+
+async def test_settle_without_run_id_noops():
+    run = _run(id=None, reserved_credit_seconds=600)
+    tx = AsyncMock()
+    with patch.object(reservation.db_client, "settle_run_credits_tx", new=tx):
+        assert await settle_workflow_run_credits(1, run) == ALREADY_APPLIED
+    tx.assert_not_awaited()
