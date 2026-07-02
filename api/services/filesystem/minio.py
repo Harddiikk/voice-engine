@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 from typing import Any, BinaryIO, Dict, Optional
 
@@ -94,10 +95,13 @@ class MinioFileSystem(BaseFileSystem):
             data = await content.read()
 
             def _put():
+                # minio's put_object requires a file-like object with read();
+                # wrap the in-memory bytes in a stream (raw bytes raise
+                # "'bytes' object has no attribute 'read'").
                 self.client.put_object(
                     self.bucket_name,
                     file_path,
-                    data=bytes(data),
+                    data=io.BytesIO(data),
                     length=len(data),
                 )
 
