@@ -37,5 +37,8 @@ def format_public_cost_info(
 
     return {
         "dograh_token_usage": dograh_token_usage,
+        # Neutral alias for dograh_token_usage (same value). Prefer this key;
+        # dograh_token_usage is deprecated and retained for backward compat.
+        "model_token_usage": dograh_token_usage,
         "call_duration_seconds": duration,
     }

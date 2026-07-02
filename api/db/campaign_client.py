@@ -715,6 +715,76 @@ class CampaignClient(BaseDBClient):
             result = await session.execute(query)
             return list(result.all())
 
+    async def get_campaign_total_call_seconds(self, campaign_id: int) -> int:
+        """Authoritative total call seconds for a campaign.
+
+        Sums ``usage_info->>'call_duration_seconds'`` over the campaign's
+        ``is_completed`` runs — the same reliable source used for reports and
+        the org usage tile, populated for both split-pipeline and realtime
+        calls. Replaces the ``consumed_seconds`` orchestrator counter for
+        display, which under-counted connected calls (the completion webhook
+        skipped the bump because the pipeline had already marked the run
+        COMPLETED). Returns a rounded integer number of seconds.
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(
+                    func.coalesce(
+                        func.sum(
+                            WorkflowRunModel.usage_info[
+                                "call_duration_seconds"
+                            ].as_float()
+                        ),
+                        0.0,
+                    )
+                ).where(
+                    WorkflowRunModel.campaign_id == campaign_id,
+                    WorkflowRunModel.is_completed.is_(True),
+                    WorkflowRunModel.usage_info["call_duration_seconds"]
+                    .as_string()
+                    .isnot(None),
+                )
+            )
+            return int(round(result.scalar() or 0.0))
+
+    async def get_campaign_total_call_seconds_bulk(
+        self, campaign_ids: List[int]
+    ) -> Dict[int, int]:
+        """Bulk variant of ``get_campaign_total_call_seconds``.
+
+        Returns {campaign_id: total_seconds} for every requested id (0 when a
+        campaign has no completed runs). One query — avoids N+1 on the
+        campaigns list.
+        """
+        if not campaign_ids:
+            return {}
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(
+                    WorkflowRunModel.campaign_id,
+                    func.coalesce(
+                        func.sum(
+                            WorkflowRunModel.usage_info[
+                                "call_duration_seconds"
+                            ].as_float()
+                        ),
+                        0.0,
+                    ),
+                )
+                .where(
+                    WorkflowRunModel.campaign_id.in_(campaign_ids),
+                    WorkflowRunModel.is_completed.is_(True),
+                    WorkflowRunModel.usage_info["call_duration_seconds"]
+                    .as_string()
+                    .isnot(None),
+                )
+                .group_by(WorkflowRunModel.campaign_id)
+            )
+            totals = {cid: 0 for cid in campaign_ids}
+            for campaign_id, seconds in result.all():
+                totals[campaign_id] = int(round(seconds or 0.0))
+            return totals
+
     async def create_queued_run(
         self,
         campaign_id: int,

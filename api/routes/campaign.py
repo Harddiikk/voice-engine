@@ -304,8 +304,15 @@ def _build_campaign_response(
     executed_count: int = 0,
     total_queued_count: int = 0,
     telephony_configuration_name: Optional[str] = None,
+    total_call_seconds: Optional[int] = None,
 ) -> CampaignResponse:
-    """Build a CampaignResponse from a campaign model."""
+    """Build a CampaignResponse from a campaign model.
+
+    ``total_call_seconds`` is the authoritative campaign spend basis
+    (SUM of completed-run call_duration_seconds). When provided it drives the
+    spent_* fields; when omitted we fall back to the legacy orchestrator
+    ``consumed_seconds`` counter (which under-counts connected calls).
+    """
     # Get retry_config from campaign or use defaults
     retry_config = (
         campaign.retry_config
@@ -340,7 +347,14 @@ def _build_campaign_response(
             campaign.orchestrator_metadata.get("consumed_seconds", 0) or 0
         )
 
-    spent_minutes = round(consumed_seconds / 60, 1)
+    # Prefer the authoritative completed-run duration SUM; fall back to the
+    # legacy counter only when the sum was not supplied by the caller.
+    spent_seconds = (
+        int(total_call_seconds)
+        if total_call_seconds is not None
+        else consumed_seconds
+    )
+    spent_minutes = round(spent_seconds / 60, 1)
     spent_inr = round(spent_minutes * CAMPAIGN_SPEND_RATE_INR_PER_MINUTE, 2)
 
     return CampaignResponse(
@@ -361,7 +375,7 @@ def _build_campaign_response(
         max_concurrency=max_concurrency,
         schedule_config=schedule_config,
         circuit_breaker=circuit_breaker_config,
-        spent_seconds=consumed_seconds,
+        spent_seconds=spent_seconds,
         spent_minutes=spent_minutes,
         spent_inr=spent_inr,
         executed_count=executed_count,
@@ -383,6 +397,11 @@ async def _get_campaign_stats(campaign_id: int) -> tuple[int, int]:
     stats_map = await db_client.get_queued_runs_stats_for_campaigns([campaign_id])
     s = stats_map.get(campaign_id, {})
     return s.get("executed", 0), s.get("total", 0)
+
+
+async def _get_campaign_spend_seconds(campaign_id: int) -> int:
+    """Authoritative campaign spend basis (completed-run duration SUM)."""
+    return await db_client.get_campaign_total_call_seconds(campaign_id)
 
 
 async def _get_telephony_configuration_name(
@@ -530,7 +549,10 @@ async def create_campaign(
         campaign.telephony_configuration_id, user.selected_organization_id
     )
     return _build_campaign_response(
-        campaign, workflow_name, telephony_configuration_name=cfg_name
+        campaign,
+        workflow_name,
+        telephony_configuration_name=cfg_name,
+        total_call_seconds=0,  # fresh campaign has no completed runs yet
     )
 
 
@@ -634,6 +656,11 @@ async def get_campaigns(
         [c.id for c in campaigns]
     )
 
+    # Authoritative spend basis for every campaign in one query (no N+1).
+    spend_map = await db_client.get_campaign_total_call_seconds_bulk(
+        [c.id for c in campaigns]
+    )
+
     # Build {config_id: name} map by fetching all configs for the org once,
     # rather than one lookup per campaign.
     org_configs = await db_client.list_telephony_configurations(
@@ -650,6 +677,7 @@ async def get_campaigns(
             telephony_configuration_name=config_name_map.get(
                 c.telephony_configuration_id
             ),
+            total_call_seconds=spend_map.get(c.id, 0),
         )
         for c in campaigns
     ]
@@ -673,12 +701,14 @@ async def get_campaign(
     cfg_name = await _get_telephony_configuration_name(
         campaign.telephony_configuration_id, user.selected_organization_id
     )
+    spent_seconds = await _get_campaign_spend_seconds(campaign.id)
     return _build_campaign_response(
         campaign,
         workflow_name or "Unknown",
         executed,
         total,
         telephony_configuration_name=cfg_name,
+        total_call_seconds=spent_seconds,
     )
 
 
@@ -730,12 +760,14 @@ async def start_campaign(
     cfg_name = await _get_telephony_configuration_name(
         campaign.telephony_configuration_id, user.selected_organization_id
     )
+    spent_seconds = await _get_campaign_spend_seconds(campaign.id)
     return _build_campaign_response(
         campaign,
         workflow_name or "Unknown",
         executed,
         total,
         telephony_configuration_name=cfg_name,
+        total_call_seconds=spent_seconds,
     )
 
 
@@ -764,12 +796,14 @@ async def pause_campaign(
     cfg_name = await _get_telephony_configuration_name(
         campaign.telephony_configuration_id, user.selected_organization_id
     )
+    spent_seconds = await _get_campaign_spend_seconds(campaign.id)
     return _build_campaign_response(
         campaign,
         workflow_name or "Unknown",
         executed,
         total,
         telephony_configuration_name=cfg_name,
+        total_call_seconds=spent_seconds,
     )
 
 
@@ -836,12 +870,14 @@ async def update_campaign(
     cfg_name = await _get_telephony_configuration_name(
         campaign.telephony_configuration_id, user.selected_organization_id
     )
+    spent_seconds = await _get_campaign_spend_seconds(campaign.id)
     return _build_campaign_response(
         campaign,
         workflow_name or "Unknown",
         executed,
         total,
         telephony_configuration_name=cfg_name,
+        total_call_seconds=spent_seconds,
     )
 
 
@@ -1014,6 +1050,7 @@ async def redial_campaign(
         executed,
         total,
         telephony_configuration_name=cfg_name,
+        total_call_seconds=0,  # fresh redial campaign has no completed runs yet
     )
 
 
@@ -1065,12 +1102,14 @@ async def resume_campaign(
     cfg_name = await _get_telephony_configuration_name(
         campaign.telephony_configuration_id, user.selected_organization_id
     )
+    spent_seconds = await _get_campaign_spend_seconds(campaign.id)
     return _build_campaign_response(
         campaign,
         workflow_name or "Unknown",
         executed,
         total,
         telephony_configuration_name=cfg_name,
+        total_call_seconds=spent_seconds,
     )
 
 

@@ -23,6 +23,8 @@ class CurrentUsageResponse(BaseModel):
     period_start: str
     period_end: str
     used_dograh_tokens: float
+    # Neutral alias for used_dograh_tokens (same value). Prefer this key.
+    used_model_tokens: Optional[float] = None
     total_duration_seconds: int
     used_amount_usd: Optional[float] = None
     currency: Optional[str] = None
@@ -97,6 +99,8 @@ class WorkflowRunUsageResponse(BaseModel):
     name: str
     created_at: str
     dograh_token_usage: float
+    # Neutral alias for dograh_token_usage (same value). Prefer this key.
+    model_token_usage: Optional[float] = None
     call_duration_seconds: int
     recording_url: Optional[str] = None
     transcript_url: Optional[str] = None
@@ -126,6 +130,8 @@ class WorkflowRunUsageResponse(BaseModel):
 class UsageHistoryResponse(BaseModel):
     runs: List[WorkflowRunUsageResponse]
     total_dograh_tokens: float
+    # Neutral alias for total_dograh_tokens (same value). Prefer this key.
+    total_model_tokens: Optional[float] = None
     total_duration_seconds: int
     total_count: int
     page: int
@@ -138,6 +144,8 @@ class DailyUsageItem(BaseModel):
     minutes: float
     cost_usd: Optional[float] = None
     dograh_tokens: float
+    # Neutral alias for dograh_tokens (same value). Prefer this key.
+    model_tokens: Optional[float] = None
     call_count: int
 
 
@@ -146,7 +154,79 @@ class DailyUsageBreakdownResponse(BaseModel):
     total_minutes: float
     total_cost_usd: Optional[float] = None
     total_dograh_tokens: float
+    # Neutral alias for total_dograh_tokens (same value). Prefer this key;
+    # total_dograh_tokens is retained for backward compatibility.
+    total_model_tokens: Optional[float] = None
     currency: Optional[str] = None
+
+
+class OverviewRange(BaseModel):
+    start: str
+    end: str
+    timezone: str
+
+
+class OverviewTrendPoint(BaseModel):
+    bucket: str
+    calls: int
+    minutes: float
+
+
+class OverviewDisposition(BaseModel):
+    disposition: str
+    count: int
+
+
+class OverviewOutcomes(BaseModel):
+    success: int
+    failed: int
+    other: int
+    by_disposition: List[OverviewDisposition]
+
+
+class OverviewTotals(BaseModel):
+    total_minutes: float
+    total_calls: int
+    connected_calls: int
+    success_rate: float
+    active_agents: int
+    live_calls: int
+    credits_seconds_remaining: Optional[int] = None
+    unlimited: bool
+
+
+class OrganizationOverviewResponse(BaseModel):
+    period: str
+    range: OverviewRange
+    totals: OverviewTotals
+    trends: List[OverviewTrendPoint]
+    outcomes: OverviewOutcomes
+
+
+@router.get("/overview", response_model=OrganizationOverviewResponse)
+async def get_organization_overview(
+    period: Literal["day", "week", "month"] = Query(
+        "month",
+        description=(
+            "Trend granularity + window: day (last 30 days), week (last 12 "
+            "weeks), month (last 12 months). Totals are computed over the same "
+            "window."
+        ),
+    ),
+    user: UserModel = Depends(get_user_with_selected_organization),
+):
+    """Consolidated analytics overview for the selected organization.
+
+    Not price-gated — returns minutes/calls/outcomes for metered and unmetered
+    orgs alike (cost is never touched here).
+    """
+    try:
+        return await db_client.get_organization_overview(
+            user.selected_organization_id, period=period
+        )
+    except Exception as e:
+        logger.error(f"Failed to build organization overview: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/usage/current-period", response_model=CurrentUsageResponse)
@@ -502,6 +582,7 @@ async def get_usage_history(
         return {
             "runs": runs,
             "total_dograh_tokens": total_tokens,
+            "total_model_tokens": total_tokens,
             "total_duration_seconds": total_duration,
             "total_count": total_count,
             "page": page,
@@ -561,18 +642,22 @@ async def get_daily_usage_breakdown(
     days: int = Query(7, ge=1, le=30, description="Number of days to include"),
     user: UserModel = Depends(get_user),
 ):
-    """Get daily usage breakdown for the last N days. Only available for organizations with pricing."""
+    """Get daily usage breakdown for the last N days.
+
+    Works for unmetered orgs too: when the org has no ``price_per_second_usd``
+    the minutes are still returned and the cost fields come back as 0/null. The
+    underlying duration SUM is identical regardless of pricing.
+    """
     if not user.selected_organization_id:
         raise HTTPException(status_code=400, detail="No organization selected")
 
     try:
-        # Get organization to check if it has pricing
+        # Unmetered orgs (no pricing) still get minutes; cost is reported as 0.
         org = await db_client.get_organization_by_id(user.selected_organization_id)
-        if not org or org.price_per_second_usd is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Daily breakdown is only available for organizations with pricing configured",
-            )
+        if not org:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        is_metered = org.price_per_second_usd is not None
+        price_per_second_usd = org.price_per_second_usd if is_metered else 0.0
 
         # Calculate date range
         end_date = datetime.now()
@@ -584,9 +669,16 @@ async def get_daily_usage_breakdown(
             user.selected_organization_id,
             start_date,
             end_date,
-            org.price_per_second_usd,
+            price_per_second_usd,
             user_id=user.id,
         )
+
+        # For unmetered orgs, null out the (meaningless) cost/currency fields.
+        if not is_metered:
+            breakdown["total_cost_usd"] = None
+            breakdown["currency"] = None
+            for item in breakdown.get("breakdown", []):
+                item["cost_usd"] = None
 
         return breakdown
     except HTTPException:

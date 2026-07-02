@@ -7,6 +7,7 @@ from sqlalchemy import Float, Integer, Text, and_, cast, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from api.db.models import WorkflowRunModel
+from api.enums import CallType
 
 
 def get_workflow_run_order_clause(
@@ -49,6 +50,10 @@ ATTRIBUTE_FIELD_MAPPING = {
     "runId": "id",
     "workflowId": "workflow_id",
     "campaignId": "campaign_id",
+    # Call direction (inbound/outbound). Both spellings map to the same column
+    # so callers can use either the camelCase filter key or the raw column name.
+    "callType": "call_type",
+    "call_type": "call_type",
     "callTags": "gathered_context.call_tags",
     "callerNumber": "initial_context.caller_number",
     "calledNumber": "initial_context.called_number",
@@ -130,6 +135,23 @@ def apply_workflow_run_filters(
                 if value.get("value") is not None:
                     filter_conditions.append(
                         WorkflowRunModel.campaign_id == value["value"]
+                    )
+
+            elif field == "call_type":
+                # Direction filter (inbound/outbound). Accepts either a single
+                # value ({"value": "inbound"}) or a multi-select ({"codes":
+                # [...]}). Unknown directions are dropped so a bad value can't
+                # produce an always-false query silently.
+                directions: list[str] = []
+                if isinstance(value.get("codes"), list):
+                    directions = [str(v).lower() for v in value["codes"] if v]
+                elif value.get("value") is not None:
+                    directions = [str(value["value"]).lower()]
+                valid_directions = {ct.value for ct in CallType}
+                directions = [d for d in directions if d in valid_directions]
+                if directions:
+                    filter_conditions.append(
+                        WorkflowRunModel.call_type.in_(directions)
                     )
 
             elif filter_type == "dateRange" and field == "created_at":

@@ -26,6 +26,38 @@ from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.utils.enums import EndTaskReason
 
 
+async def _bump_campaign_spend_for_run(
+    workflow_run_id: int, call_duration_seconds: object
+) -> None:
+    """Add a connected call's duration to its campaign spend counter.
+
+    Runs off the pipeline hot path (fire-and-forget). Only campaign runs are
+    counted. This is the CONNECTED-call half of the campaign ``consumed_seconds``
+    counter: the telephony ``completed`` webhook skips the bump for runs the
+    pipeline already marked COMPLETED (see status_processor), so without this the
+    counter under-counted every connected call. Display uses the authoritative
+    duration SUM regardless; this keeps the counter meaningful for other
+    consumers. Non-double-counting: status_processor only bumps runs still
+    INITIALIZED (never connected), so a connected run is only ever counted here.
+    """
+    try:
+        secs = int(round(float(call_duration_seconds or 0)))
+    except (TypeError, ValueError):
+        secs = 0
+    if secs <= 0:
+        return
+    try:
+        workflow_run = await db_client.get_workflow_run_by_id(workflow_run_id)
+        if workflow_run and workflow_run.campaign_id:
+            await db_client.increment_campaign_metadata_counter(
+                workflow_run.campaign_id, "consumed_seconds", delta=secs
+            )
+    except Exception as exc:
+        logger.warning(
+            f"[run {workflow_run_id}] Failed to bump campaign consumed_seconds: {exc}"
+        )
+
+
 async def _capture_call_event(
     workflow_run_id: int,
     user_provider_id: str | None,
@@ -329,6 +361,17 @@ def register_event_handlers(
             gathered_context=gathered_context,
             is_completed=True,
             state=WorkflowRunState.COMPLETED.value,
+        )
+
+        # Count this connected call's duration toward its campaign spend
+        # counter (fire-and-forget; no-op for non-campaign runs).
+        asyncio.create_task(
+            _bump_campaign_spend_for_run(
+                workflow_run_id,
+                usage_info.get("call_duration_seconds")
+                if isinstance(usage_info, dict)
+                else None,
+            )
         )
 
         asyncio.create_task(
