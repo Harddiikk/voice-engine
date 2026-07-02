@@ -2,9 +2,9 @@
 
 import { Suspense } from 'react';
 
+import { OverviewDashboard } from '@/components/dashboard/OverviewDashboard';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-import { ReportsView } from '../reports/ReportsView';
 import { RunsView } from '../usage/RunsView';
 
 export default function AnalyticsPage() {
@@ -37,7 +37,7 @@ export default function AnalyticsPage() {
           </TabsList>
 
           <TabsContent value="overview" className="mt-0">
-            <ReportsView showHeader={false} />
+            <OverviewDashboard showHeader={false} />
           </TabsContent>
 
           <TabsContent value="runs" className="mt-0">

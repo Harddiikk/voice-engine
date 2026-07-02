@@ -14,12 +14,14 @@ import {
   Database,
   Home,
   Key,
+  LayoutDashboard,
   LogOut,
   type LucideIcon,
   Megaphone,
   MessageCircle,
   Phone,
   PhoneCall,
+  PhoneIncoming,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -95,6 +97,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         icon: Home,
       },
       {
+        title: "Overview",
+        url: "/overview",
+        icon: LayoutDashboard,
+      },
+      {
         title: "KYC",
         url: "/kyc",
         icon: ShieldCheck,
@@ -131,6 +138,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         url: "/telephony-configurations",
         icon: Phone,
         showsTelephonyWarning: true,
+      },
+      {
+        title: "Inbound",
+        url: "/inbound",
+        icon: PhoneIncoming,
       },
       {
         title: "Tools",

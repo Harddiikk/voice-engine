@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
-import { HomeMetrics } from '@/components/home/HomeMetrics';
+import { OverviewDashboard } from '@/components/dashboard/OverviewDashboard';
 import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -158,7 +158,7 @@ export default function HomePage() {
                         Here&apos;s how your voice agents are performing.
                     </p>
                     <div className="mt-6">
-                        <HomeMetrics />
+                        <OverviewDashboard showHeader={false} />
                     </div>
                 </div>
 
