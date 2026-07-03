@@ -31,6 +31,12 @@ interface Balance {
   // Sum of active per-call reservations (each live call briefly holds up to
   // 10 credits; the unused part returns when the call settles).
   on_hold_seconds?: number;
+  // ₹ money view at the client's effective per-minute rate. Cast onto the
+  // generated Balance shape (client isn't regenerated). money_left_inr is
+  // null when the org is unlimited.
+  per_minute_inr?: number;
+  money_left_inr?: number | null;
+  money_spent_inr?: number;
 }
 
 interface LedgerEntry {
@@ -165,9 +171,26 @@ export function CreditsSection() {
             ? "Unlimited"
             : `${minutes?.toLocaleString()} credits`}
         </p>
+        {/* ₹ worth of the remaining balance at the client's effective rate. */}
+        {!data.unlimited && data.money_left_inr != null && (
+          <p className="mt-0.5 text-sm text-muted-foreground tabular">
+            ≈ ₹{data.money_left_inr.toLocaleString("en-IN")}
+            {data.per_minute_inr != null &&
+              ` at ₹${data.per_minute_inr.toLocaleString("en-IN")}/min`}
+          </p>
+        )}
         {!data.unlimited && (
           <p className="mt-1 text-xs text-muted-foreground">
             1 credit = 1 minute of calling.
+          </p>
+        )}
+        {/* Spend-to-date, in ₹ at the client's effective rate. */}
+        {!data.unlimited && data.money_spent_inr != null && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Spent:{" "}
+            <span className="font-semibold tabular text-foreground">
+              ₹{data.money_spent_inr.toLocaleString("en-IN")}
+            </span>
           </p>
         )}
         {!data.unlimited && (data.on_hold_seconds ?? 0) > 0 && (

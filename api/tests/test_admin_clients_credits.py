@@ -190,11 +190,31 @@ def test_list_clients_reports_credits_and_null_passthrough():
 
     metered = _org(id=5, provider_id="org_a", free_call_seconds_remaining=90)
     unmetered = _org(id=6, provider_id="org_b", free_call_seconds_remaining=None)
+    money = {
+        "balance_seconds": 90,
+        "unlimited": False,
+        "per_minute_inr": 5.0,
+        "money_left_inr": 7.5,
+        "spent_seconds": 12,
+        "money_spent_inr": 1.0,
+    }
     with (
         patch("api.routes.admin_clients.db_client") as db,
         patch(
             "api.routes.admin_clients.get_voicelink_clients_client",
             return_value=SimpleNamespace(is_configured=False),
+        ),
+        patch(
+            "api.routes.admin_clients.get_org_plan",
+            new=AsyncMock(return_value="starter"),
+        ),
+        patch(
+            "api.routes.admin_clients.get_org_money",
+            new=AsyncMock(return_value=money),
+        ),
+        patch(
+            "api.routes.admin_clients.is_org_suspended",
+            new=AsyncMock(return_value=False),
         ),
     ):
         db.list_organizations_with_users = AsyncMock(

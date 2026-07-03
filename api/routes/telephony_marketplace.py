@@ -9,10 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from api.constants import NUMBER_PRICE_INR, NUMBER_SETUP_SECONDS
 from api.db import db_client
 from api.db.models import UserModel
 from api.services import telephony_marketplace as mkt
+from api.services.admin.profile import get_org_pricing
+from api.services.admin.suspend_gate import assert_org_not_suspended
 from api.services.auth.depends import get_user
 from api.services.voicelink_clients.client import VoiceLinkClientError
 from api.services.voicelink_clients.service import ensure_voicelink_client
@@ -31,13 +32,29 @@ def _org(user: UserModel) -> int:
     return user.selected_organization_id
 
 
+async def _number_pricing(org: int) -> tuple[int, int]:
+    """Per-client number price (INR) and the credit-seconds it costs at the org's
+    per-minute rate. Falls back to the global defaults via ``get_org_pricing``.
+    A non-positive rate (misconfigured override) yields 0 seconds rather than
+    crashing the buy path.
+    """
+    pricing = await get_org_pricing(org)
+    number_price_inr = pricing["number_price_inr"]
+    per_minute = pricing["per_minute_inr"]
+    number_setup_seconds = (
+        int(round(number_price_inr / per_minute * 60)) if per_minute > 0 else 0
+    )
+    return number_price_inr, number_setup_seconds
+
+
 @router.get("/numbers")
 async def available_numbers(user: UserModel = Depends(get_user)):
-    _org(user)
+    org = _org(user)
+    number_price_inr, number_setup_seconds = await _number_pricing(org)
     return {
         "numbers": await mkt.list_available_numbers(),
-        "price_inr": NUMBER_PRICE_INR,
-        "setup_seconds": NUMBER_SETUP_SECONDS,
+        "price_inr": number_price_inr,
+        "setup_seconds": number_setup_seconds,
     }
 
 
@@ -50,6 +67,9 @@ async def my_numbers(user: UserModel = Depends(get_user)):
 @router.post("/buy")
 async def buy_number(body: BuyNumberRequest, user: UserModel = Depends(get_user)):
     org = _org(user)
+
+    # A suspended org must not buy (or even provision) — clear 403 up front.
+    await assert_org_not_suspended(org)
 
     # Provision the org's VoiceLink client FIRST (idempotent, best-effort) so
     # the KYC gate below can scope to the org's own client.
@@ -80,13 +100,13 @@ async def buy_number(body: BuyNumberRequest, user: UserModel = Depends(get_user)
 
     # Charge FIRST, atomically + conditionally (race-safe) with its ledger row,
     # so concurrent buys can't double-spend. Unlimited (NULL) orgs and
-    # zero-cost are never charged ('unmetered').
-    cost = NUMBER_SETUP_SECONDS
+    # zero-cost are never charged ('unmetered'). Price + seconds are per-client.
+    number_price_inr, cost = await _number_pricing(org)
     charge = await db_client.charge_purchase_tx(
         org,
         cost,
         kind="number_purchase",
-        description=f"Phone number {did_number} — ₹{NUMBER_PRICE_INR}",
+        description=f"Phone number {did_number} — ₹{number_price_inr}",
     )
     if charge is None:
         raise HTTPException(status_code=402, detail="insufficient_credits")

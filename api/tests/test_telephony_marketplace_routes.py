@@ -1,7 +1,7 @@
-"""Marketplace buy route: sequencing (provision -> fail-closed KYC gate ->
-pool check -> charge -> assign -> local bookkeeping), price fields, atomic
-charge, refund on assign failure, unmetered skip. (Service-level tests live in
-test_telephony_marketplace.py.)"""
+"""Marketplace buy route: sequencing (suspend gate -> provision -> fail-closed KYC
+gate -> pool check -> per-client charge -> assign -> local bookkeeping), per-client
+price fields, atomic charge, refund on assign failure, unmetered skip, suspend 403.
+(Service-level tests live in test_telephony_marketplace.py.)"""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -11,6 +11,17 @@ from fastapi import HTTPException
 
 from api.routes import telephony_marketplace as tm
 from api.services.voicelink_clients.client import VoiceLinkClientError
+
+# Per-client pricing distinct from the global defaults (500 INR @ ₹8/min -> 3750s)
+# so the tests actually prove the per-client path is used: ₹600 @ ₹10/min -> 3600s.
+PRICE_INR = 600
+SETUP_SECONDS = 3600
+PRICING = {
+    "per_minute_inr": 10.0,
+    "number_price_inr": PRICE_INR,
+    "setup_fee_inr": 0,
+    "custom": {},
+}
 
 
 def _user(org=4):
@@ -25,24 +36,35 @@ AVAILABLE = [{"did_id": 942, "did_number": "9484959244", "user_status": 1}]
 
 
 def _gates():
-    return (
-        patch.object(tm, "assert_org_kyc_complete_for_purchase", new=AsyncMock()),
-        patch.object(tm, "ensure_voicelink_client", new=AsyncMock()),
-    )
+    """No-op patches for the buy flow's gates + per-client pricing. Tests pick the
+    ones they need to enter (and override individually when asserting a gate)."""
+    return {
+        "suspend": patch.object(tm, "assert_org_not_suspended", new=AsyncMock()),
+        "kyc": patch.object(
+            tm, "assert_org_kyc_complete_for_purchase", new=AsyncMock()
+        ),
+        "ensure": patch.object(tm, "ensure_voicelink_client", new=AsyncMock()),
+        "pricing": patch.object(
+            tm, "get_org_pricing", new=AsyncMock(return_value=PRICING)
+        ),
+    }
 
 
 # ======== GET /numbers ========
 
 
 @pytest.mark.asyncio
-async def test_numbers_reports_price_and_setup_seconds():
-    with patch.object(
-        tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
+async def test_numbers_reports_per_client_price_and_setup_seconds():
+    with (
+        patch.object(tm, "get_org_pricing", new=AsyncMock(return_value=PRICING)),
+        patch.object(
+            tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
+        ),
     ):
         body = await tm.available_numbers(user=_user())
     assert body["numbers"] == AVAILABLE
-    assert body["price_inr"] == tm.NUMBER_PRICE_INR
-    assert body["setup_seconds"] == tm.NUMBER_SETUP_SECONDS
+    assert body["price_inr"] == PRICE_INR
+    assert body["setup_seconds"] == SETUP_SECONDS
 
 
 # ======== GET /my-numbers ========
@@ -63,13 +85,17 @@ async def test_my_numbers_delegates_to_resolved_listing():
 
 
 @pytest.mark.asyncio
-async def test_buy_charges_then_assigns_then_records():
-    kyc, ensure = _gates()
+async def test_buy_charges_per_client_then_assigns_then_records():
+    g = _gates()
     with (
-        kyc,
-        ensure,
+        g["suspend"],
+        g["kyc"],
+        g["ensure"],
+        g["pricing"],
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
@@ -90,9 +116,9 @@ async def test_buy_charges_then_assigns_then_records():
 
     charge.assert_awaited_once_with(
         4,
-        tm.NUMBER_SETUP_SECONDS,
+        SETUP_SECONDS,
         kind="number_purchase",
-        description=f"Phone number 9484959244 — ₹{tm.NUMBER_PRICE_INR}",
+        description=f"Phone number 9484959244 — ₹{PRICE_INR}",
     )
     assign.assert_awaited_once_with("474", 942)
     record.assert_awaited_once_with(
@@ -108,18 +134,23 @@ async def test_buy_charges_then_assigns_then_records():
 
 
 @pytest.mark.asyncio
-async def test_buy_provisions_before_kyc_gate_and_gates_before_charge():
+async def test_buy_suspends_before_provision_gate_and_charge():
     order = []
+    suspend = AsyncMock(side_effect=lambda *a, **k: order.append("suspend"))
     ensure = AsyncMock(side_effect=lambda *a, **k: order.append("ensure"))
     gate = AsyncMock(side_effect=lambda *a, **k: order.append("gate"))
-    charge = AsyncMock(
-        side_effect=lambda *a, **k: order.append("charge") or 26250
-    )
+    charge = AsyncMock(side_effect=lambda *a, **k: order.append("charge") or 26250)
     with (
+        patch.object(tm, "assert_org_not_suspended", new=suspend),
         patch.object(tm, "ensure_voicelink_client", new=ensure),
         patch.object(tm, "assert_org_kyc_complete_for_purchase", new=gate),
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm, "get_org_pricing", new=AsyncMock(return_value=PRICING)
+        ),
+        patch.object(
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
@@ -135,15 +166,38 @@ async def test_buy_provisions_before_kyc_gate_and_gates_before_charge():
     ):
         await tm.buy_number(tm.BuyNumberRequest(did_id=942), user=_user())
 
-    assert order == ["ensure", "gate", "charge"]
-    gate.assert_awaited_once_with(4)
+    assert order == ["suspend", "ensure", "gate", "charge"]
+    suspend.assert_awaited_once_with(4)
+
+
+@pytest.mark.asyncio
+async def test_buy_403_when_suspended_never_provisions_or_charges():
+    with (
+        patch.object(
+            tm,
+            "assert_org_not_suspended",
+            new=AsyncMock(
+                side_effect=HTTPException(
+                    status_code=403, detail={"code": "account_suspended"}
+                )
+            ),
+        ),
+        patch.object(tm, "ensure_voicelink_client", new=AsyncMock()) as ensure,
+        patch.object(tm.db_client, "charge_purchase_tx", new=AsyncMock()) as charge,
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await tm.buy_number(tm.BuyNumberRequest(did_id=942), user=_user())
+    assert exc.value.status_code == 403
+    ensure.assert_not_awaited()  # suspended: don't even provision
+    charge.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_buy_400_when_still_unprovisioned_after_ensure():
-    _, ensure = _gates()
+    g = _gates()
     with (
-        ensure,
+        g["suspend"],
+        g["ensure"],
         patch.object(
             tm.db_client,
             "get_organization_by_id",
@@ -164,11 +218,14 @@ async def test_buy_400_when_still_unprovisioned_after_ensure():
 
 @pytest.mark.asyncio
 async def test_buy_403_kyc_block_happens_before_charge():
-    _, ensure = _gates()
+    g = _gates()
     with (
-        ensure,
+        g["suspend"],
+        g["ensure"],
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm,
@@ -187,12 +244,16 @@ async def test_buy_403_kyc_block_happens_before_charge():
 
 @pytest.mark.asyncio
 async def test_buy_402_when_insufficient_and_never_assigns():
-    kyc, ensure = _gates()
+    g = _gates()
     with (
-        kyc,
-        ensure,
+        g["suspend"],
+        g["kyc"],
+        g["ensure"],
+        g["pricing"],
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
@@ -209,13 +270,17 @@ async def test_buy_402_when_insufficient_and_never_assigns():
 
 
 @pytest.mark.asyncio
-async def test_buy_refunds_when_assign_fails():
-    kyc, ensure = _gates()
+async def test_buy_refunds_per_client_amount_when_assign_fails():
+    g = _gates()
     with (
-        kyc,
-        ensure,
+        g["suspend"],
+        g["kyc"],
+        g["ensure"],
+        g["pricing"],
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
@@ -236,7 +301,7 @@ async def test_buy_refunds_when_assign_fails():
     assert exc.value.status_code == 502
     refund.assert_awaited_once_with(
         4,
-        tm.NUMBER_SETUP_SECONDS,
+        SETUP_SECONDS,
         description="Refund: phone number 9484959244 assignment failed",
     )
     record.assert_not_awaited()  # nothing owned -> nothing to record
@@ -246,12 +311,16 @@ async def test_buy_refunds_when_assign_fails():
 async def test_buy_bookkeeping_failure_after_map_never_refunds_or_raises():
     """Once map_did succeeded the org owns the DID: a local persist failure is
     logged loudly but must not refund the charge or fail the purchase."""
-    kyc, ensure = _gates()
+    g = _gates()
     with (
-        kyc,
-        ensure,
+        g["suspend"],
+        g["kyc"],
+        g["ensure"],
+        g["pricing"],
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
@@ -281,18 +350,24 @@ async def test_buy_bookkeeping_failure_after_map_never_refunds_or_raises():
 
 @pytest.mark.asyncio
 async def test_buy_unmetered_org_is_never_charged_or_refunded():
-    kyc, ensure = _gates()
+    g = _gates()
     with (
-        kyc,
-        ensure,
+        g["suspend"],
+        g["kyc"],
+        g["ensure"],
+        g["pricing"],
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)
         ),
         patch.object(
-            tm.db_client, "charge_purchase_tx", new=AsyncMock(return_value="unmetered")
+            tm.db_client,
+            "charge_purchase_tx",
+            new=AsyncMock(return_value="unmetered"),
         ),
         patch.object(
             tm.mkt,
@@ -309,12 +384,16 @@ async def test_buy_unmetered_org_is_never_charged_or_refunded():
 
 @pytest.mark.asyncio
 async def test_buy_409_when_did_not_in_available_pool():
-    kyc, ensure = _gates()
+    g = _gates()
     with (
-        kyc,
-        ensure,
+        g["suspend"],
+        g["kyc"],
+        g["ensure"],
+        g["pricing"],
         patch.object(
-            tm.db_client, "get_organization_by_id", new=AsyncMock(return_value=_org_row())
+            tm.db_client,
+            "get_organization_by_id",
+            new=AsyncMock(return_value=_org_row()),
         ),
         patch.object(
             tm.mkt, "list_available_numbers", new=AsyncMock(return_value=AVAILABLE)

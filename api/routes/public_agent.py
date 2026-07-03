@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from api.constants import RATE_LIMIT_PUBLIC_API_PER_MIN
 from api.db import db_client
 from api.enums import TriggerState, WorkflowStatus
+from api.services.admin.suspend_gate import assert_org_not_suspended
 from api.services.quota_service import authorize_workflow_run_start
 from api.services.rate_limit import enforce_rate_limit
 from api.services.telephony.factory import (
@@ -338,8 +339,10 @@ async def _initiate_call(
 ) -> TriggerCallResponse:
     """Resolve the requested public target, then execute the common call flow."""
     api_key = await _validate_api_key(x_api_key)
-    # Require KYC before any outbound dialing. The credit balance is enforced by
+    # Block a suspended org before anything else (clear 403), then require KYC
+    # before any outbound dialing. The credit balance is enforced by
     # authorize_workflow_run_start (run-level reservation) in the call flow.
+    await assert_org_not_suspended(api_key.organization_id)
     await assert_org_kyc_complete(api_key.organization_id)
     target = await target_resolver(
         identifier,

@@ -31,6 +31,118 @@ export interface AdminClient {
   live_client_id?: string | null;
   // Remaining call-seconds balance; null = unmetered (unlimited).
   credits_seconds_remaining?: number | null;
+  // Billing/plan enrichment (added by the richer admin list endpoint). These
+  // are optional so the row still renders if the backend has not shipped them.
+  effective_plan?: string | null;
+  // Remaining balance in INR; null = unmetered (unlimited).
+  money_left_inr?: number | null;
+  money_spent_inr?: number | null;
+  per_minute_inr?: number | null;
+  suspended?: boolean;
+}
+
+// The five sellable plans, in ascending order, for the plan selectors.
+export const ADMIN_PLANS = [
+  "trial",
+  "starter",
+  "growth",
+  "scale",
+  "enterprise",
+] as const;
+export type AdminPlan = (typeof ADMIN_PLANS)[number];
+
+export interface AdminClientNote {
+  at?: string | null;
+  by?: string | number | null;
+  text: string;
+}
+
+export interface AdminClientMoney {
+  balance_seconds?: number | null;
+  unlimited?: boolean | null;
+  per_minute_inr?: number | null;
+  money_left_inr?: number | null;
+  spent_seconds?: number | null;
+  money_spent_inr?: number | null;
+}
+
+export interface AdminClientPricing {
+  per_minute_inr?: number | null;
+  number_price_inr?: number | null;
+  setup_fee_inr?: number | null;
+  // Map of pricing-field name -> true when that field is a per-client override
+  // (rather than derived from the plan default).
+  custom?: Record<string, boolean> | null;
+}
+
+export interface AdminClientVoiceLink {
+  status?: string | null;
+  client_id?: string | null;
+  username?: string | null;
+  did_number?: string | null;
+}
+
+export interface AdminClientUsage {
+  total_calls?: number | null;
+  total_minutes?: number | null;
+  [key: string]: number | null | undefined;
+}
+
+// Detail payload for GET /admin/clients/{orgId}. Every nested block is optional
+// so the page keeps rendering if the parallel backend has not shipped a field.
+export interface AdminClientDetail {
+  organization_id: number;
+  organization_name: string;
+  owner_email?: string | null;
+  owner_user_id?: number | null;
+  owner_provider_id?: string | null;
+  plan?: string | null;
+  plan_override?: string | null;
+  features?: { api?: boolean | null; mcp?: boolean | null } | null;
+  pricing?: AdminClientPricing | null;
+  money?: AdminClientMoney | null;
+  suspended?: boolean;
+  notes?: AdminClientNote[] | null;
+  voicelink?: AdminClientVoiceLink | null;
+  kyc?: AdminClientKycStatus | null;
+  usage?: AdminClientUsage | null;
+}
+
+// PATCH /admin/clients/{orgId}/profile — every field optional; only sent fields
+// are applied. A `null` on a pricing field clears the override (reset to plan
+// default); a `null` on plan_override clears the plan override.
+export interface AdminProfilePatch {
+  plan_override?: string | null;
+  per_minute_inr?: number | null;
+  number_price_inr?: number | null;
+  setup_fee_inr?: number | null;
+  suspended?: boolean;
+}
+
+export interface ChargeSetupFeeResult {
+  balance?: number | null;
+  money?: AdminClientMoney | null;
+}
+
+export interface CreateAdminClientBody {
+  email: string;
+  name?: string;
+  plan?: string;
+  initial_credit_minutes?: number;
+}
+
+export interface CreateAdminClientResult {
+  organization_id?: number;
+  [key: string]: unknown;
+}
+
+export interface AdminAuditEntry {
+  id: number;
+  actor_user_id?: number | null;
+  target_organization_id?: number | null;
+  action: string;
+  detail?: unknown;
+  created_at?: string | null;
 }
 
 export interface AdminClientsListResult {
@@ -123,12 +235,12 @@ function detailFromBody(body: unknown): string {
   return "Request failed";
 }
 
-async function adminFetch<T>(
+async function adminRootFetch<T>(
   token: string,
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${backendUrl()}/api/v1/admin/clients${path}`, {
+  const res = await fetch(`${backendUrl()}/api/v1/admin${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -144,6 +256,16 @@ async function adminFetch<T>(
   }
   if (!res.ok) throw new Error(detailFromBody(body));
   return body as T;
+}
+
+// Convenience wrapper for the `/admin/clients` sub-tree (the majority of
+// routes). `path` is appended after `/admin/clients` (e.g. "" or "/42/notes").
+function adminFetch<T>(
+  token: string,
+  path: string,
+  init?: RequestInit,
+): Promise<T> {
+  return adminRootFetch<T>(token, `/clients${path}`, init);
 }
 
 export const listAdminClients = (token: string) =>
@@ -205,3 +327,53 @@ export const recordClientPassword = (
     method: "POST",
     body: JSON.stringify({ password }),
   });
+
+export const getAdminClientDetail = (token: string, organizationId: number) =>
+  adminFetch<AdminClientDetail>(token, `/${organizationId}`);
+
+export const updateAdminProfile = (
+  token: string,
+  organizationId: number,
+  patch: AdminProfilePatch,
+) =>
+  adminFetch<AdminClientDetail>(token, `/${organizationId}/profile`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+
+export const addClientNote = (
+  token: string,
+  organizationId: number,
+  text: string,
+) =>
+  adminFetch<AdminClientNote[]>(token, `/${organizationId}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+
+export const chargeSetupFee = (
+  token: string,
+  organizationId: number,
+  amountInr?: number,
+) =>
+  adminFetch<ChargeSetupFeeResult>(token, `/${organizationId}/charge-setup-fee`, {
+    method: "POST",
+    body: JSON.stringify(amountInr != null ? { amount_inr: amountInr } : {}),
+  });
+
+export const createAdminClient = (token: string, body: CreateAdminClientBody) =>
+  adminFetch<CreateAdminClientResult>(token, "", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const listAdminAudit = (
+  token: string,
+  organizationId?: number,
+  limit = 50,
+) => {
+  const qs = new URLSearchParams();
+  if (organizationId != null) qs.set("org_id", String(organizationId));
+  qs.set("limit", String(limit));
+  return adminRootFetch<AdminAuditEntry[]>(token, `/audit?${qs.toString()}`);
+};

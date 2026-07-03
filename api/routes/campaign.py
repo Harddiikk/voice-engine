@@ -16,6 +16,8 @@ from api.constants import (
 from api.db import db_client
 from api.db.models import UserModel
 from api.enums import OrganizationConfigurationKey
+from api.services.admin.profile import get_org_pricing
+from api.services.admin.suspend_gate import assert_org_not_suspended
 from api.services.auth.depends import get_user
 from api.services.campaign.runner import campaign_runner_service
 from api.services.campaign.schedule import default_schedule_config
@@ -313,6 +315,7 @@ def _build_campaign_response(
     total_queued_count: int = 0,
     telephony_configuration_name: Optional[str] = None,
     total_call_seconds: Optional[int] = None,
+    spend_rate_inr_per_minute: float = CAMPAIGN_SPEND_RATE_INR_PER_MINUTE,
 ) -> CampaignResponse:
     """Build a CampaignResponse from a campaign model.
 
@@ -320,6 +323,10 @@ def _build_campaign_response(
     (SUM of completed-run call_duration_seconds). When provided it drives the
     spent_* fields; when omitted we fall back to the legacy orchestrator
     ``consumed_seconds`` counter (which under-counts connected calls).
+
+    ``spend_rate_inr_per_minute`` is the campaign org's per-client rate (see
+    ``get_org_pricing``); callers resolve it and pass it in. It defaults to the
+    global rate so spend never mis-prices if a caller forgets to thread it.
     """
     # Get retry_config from campaign or use defaults
     retry_config = (
@@ -365,7 +372,7 @@ def _build_campaign_response(
         else consumed_seconds
     )
     spent_minutes = round(spent_seconds / 60, 1)
-    spent_inr = round(spent_minutes * CAMPAIGN_SPEND_RATE_INR_PER_MINUTE, 2)
+    spent_inr = round(spent_minutes * spend_rate_inr_per_minute, 2)
 
     return CampaignResponse(
         id=campaign.id,
@@ -413,6 +420,12 @@ async def _get_campaign_stats(campaign_id: int) -> tuple[int, int]:
 async def _get_campaign_spend_seconds(campaign_id: int) -> int:
     """Authoritative campaign spend basis (completed-run duration SUM)."""
     return await db_client.get_campaign_total_call_seconds(campaign_id)
+
+
+async def _get_org_spend_rate(organization_id: int) -> float:
+    """Per-client campaign spend rate (INR/min), with global-default fallback."""
+    pricing = await get_org_pricing(organization_id)
+    return pricing["per_minute_inr"]
 
 
 async def _get_telephony_configuration_name(
@@ -565,6 +578,9 @@ async def create_campaign(
         workflow_name,
         telephony_configuration_name=cfg_name,
         total_call_seconds=0,  # fresh campaign has no completed runs yet
+        spend_rate_inr_per_minute=await _get_org_spend_rate(
+            campaign.organization_id
+        ),
     )
 
 
@@ -680,6 +696,10 @@ async def get_campaigns(
     )
     config_name_map = {cfg.id: cfg.name for cfg in org_configs}
 
+    # Every campaign in the list belongs to the same org, so resolve the
+    # per-client spend rate ONCE and price all of them with it.
+    spend_rate = await _get_org_spend_rate(user.selected_organization_id)
+
     campaign_responses = [
         _build_campaign_response(
             c,
@@ -690,6 +710,7 @@ async def get_campaigns(
                 c.telephony_configuration_id
             ),
             total_call_seconds=spend_map.get(c.id, 0),
+            spend_rate_inr_per_minute=spend_rate,
         )
         for c in campaigns
     ]
@@ -721,6 +742,9 @@ async def get_campaign(
         total,
         telephony_configuration_name=cfg_name,
         total_call_seconds=spent_seconds,
+        spend_rate_inr_per_minute=await _get_org_spend_rate(
+            campaign.organization_id
+        ),
     )
 
 
@@ -745,8 +769,10 @@ async def start_campaign(
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    # Require KYC before any outbound dialing. The credit balance is enforced by
+    # Block a suspended org before anything else (clear 403), then require KYC
+    # before any outbound dialing. The credit balance is enforced by
     # authorize_workflow_run_start below (single local ledger).
+    await assert_org_not_suspended(campaign.organization_id)
     await assert_org_kyc_complete(campaign.organization_id)
 
     # Check Dograh quota before starting campaign (apply per-workflow
@@ -780,6 +806,9 @@ async def start_campaign(
         total,
         telephony_configuration_name=cfg_name,
         total_call_seconds=spent_seconds,
+        spend_rate_inr_per_minute=await _get_org_spend_rate(
+            campaign.organization_id
+        ),
     )
 
 
@@ -816,6 +845,9 @@ async def pause_campaign(
         total,
         telephony_configuration_name=cfg_name,
         total_call_seconds=spent_seconds,
+        spend_rate_inr_per_minute=await _get_org_spend_rate(
+            campaign.organization_id
+        ),
     )
 
 
@@ -894,6 +926,9 @@ async def update_campaign(
         total,
         telephony_configuration_name=cfg_name,
         total_call_seconds=spent_seconds,
+        spend_rate_inr_per_minute=await _get_org_spend_rate(
+            campaign.organization_id
+        ),
     )
 
 
@@ -1067,6 +1102,7 @@ async def redial_campaign(
         total,
         telephony_configuration_name=cfg_name,
         total_call_seconds=0,  # fresh redial campaign has no completed runs yet
+        spend_rate_inr_per_minute=await _get_org_spend_rate(child.organization_id),
     )
 
 
@@ -1091,8 +1127,10 @@ async def resume_campaign(
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    # Require KYC before any outbound dialing. The credit balance is enforced by
+    # Block a suspended org before anything else (clear 403), then require KYC
+    # before any outbound dialing. The credit balance is enforced by
     # authorize_workflow_run_start below (single local ledger).
+    await assert_org_not_suspended(campaign.organization_id)
     await assert_org_kyc_complete(campaign.organization_id)
 
     # Check Dograh quota before resuming campaign (apply per-workflow
@@ -1126,6 +1164,9 @@ async def resume_campaign(
         total,
         telephony_configuration_name=cfg_name,
         total_call_seconds=spent_seconds,
+        spend_rate_inr_per_minute=await _get_org_spend_rate(
+            campaign.organization_id
+        ),
     )
 
 

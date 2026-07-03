@@ -56,6 +56,7 @@ def test_trigger_route_executes_as_workflow_owner():
 
     with (
         patch("api.routes.public_agent.db_client") as mock_db,
+        patch("api.routes.public_agent.assert_org_not_suspended", new=AsyncMock()),
         patch("api.routes.public_agent.assert_org_kyc_complete", new=AsyncMock()),
         patch(
             "api.routes.public_agent.authorize_workflow_run_start",
@@ -127,6 +128,7 @@ def test_workflow_uuid_route_uses_scoped_lookup_and_shared_execution():
 
     with (
         patch("api.routes.public_agent.db_client") as mock_db,
+        patch("api.routes.public_agent.assert_org_not_suspended", new=AsyncMock()),
         patch("api.routes.public_agent.assert_org_kyc_complete", new=AsyncMock()),
         patch(
             "api.routes.public_agent.authorize_workflow_run_start",
@@ -181,6 +183,7 @@ def test_workflow_uuid_route_rejects_archived_workflows():
 
     with (
         patch("api.routes.public_agent.db_client") as mock_db,
+        patch("api.routes.public_agent.assert_org_not_suspended", new=AsyncMock()),
         patch("api.routes.public_agent.assert_org_kyc_complete", new=AsyncMock()),
     ):
         mock_db.validate_api_key = AsyncMock(

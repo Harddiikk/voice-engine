@@ -1,25 +1,36 @@
 "use client";
 
 import {
+  ArrowRight,
   Coins,
-  Copy,
   ExternalLink,
-  Eye,
-  KeyRound,
   Loader2,
-  Phone,
   RefreshCw,
-  RotateCcw,
-  ShieldCheck,
+  Search,
   UserPlus,
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 
+import { PlanBadge, SuspendedBadge } from "@/components/admin/AdminBadges";
+import {
+  formatCredits,
+  formatInr,
+  formatMoneyBalance,
+  planLabel,
+} from "@/components/admin/adminFormat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +41,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -45,30 +63,23 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  ADMIN_PLANS,
   type AdminClient,
-  type AdminClientKycStatus,
-  assignDidToClient,
-  type ClientPasswordResult,
-  createClientForOrg,
-  getClientKycStatus,
-  getClientPassword,
+  createAdminClient,
   grantCreditsToClient,
   listAdminClients,
-  NO_STORED_PASSWORD,
-  recordClientPassword,
-  retryProvisionClient,
 } from "@/lib/adminClients";
 import { useAuth } from "@/lib/auth";
 import { impersonateAsSuperadmin } from "@/lib/utils";
+
+const LOW_BALANCE_THRESHOLD_INR = 100;
 
 function VoiceLinkStatusBadge({ client }: { client: AdminClient }) {
   let badge: ReactNode;
   switch (client.live_state) {
     case "active":
       badge = (
-        <Badge className="bg-emerald-600 hover:bg-emerald-600">
-          Active in VoiceLink
-        </Badge>
+        <Badge className="bg-emerald-600 hover:bg-emerald-600">Active</Badge>
       );
       break;
     case "missing":
@@ -81,8 +92,6 @@ function VoiceLinkStatusBadge({ client }: { client: AdminClient }) {
       badge = <Badge variant="secondary">Unknown</Badge>;
   }
 
-  // Surface the stored status/error only when it adds information beyond the
-  // live state (e.g. a pending error, or a stored value that disagrees).
   const tooltip =
     client.voicelink_error ||
     (client.live_state !== "active" &&
@@ -104,78 +113,23 @@ function VoiceLinkStatusBadge({ client }: { client: AdminClient }) {
   );
 }
 
-/** Seconds → "X.X min", or "Unlimited" for unmetered (null) balances. */
-function formatCredits(seconds: number | null | undefined): string {
-  if (seconds == null) return "Unlimited";
-  return `${(seconds / 60).toFixed(1)} min`;
-}
-
-function KycStatusBadge({ status }: { status: AdminClientKycStatus }) {
-  if (status.status === "disabled") {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex cursor-help">
-            <Badge variant="outline">KYC off</Badge>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs">
-          <p>VoiceLink reseller credentials are not configured on the backend</p>
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-  if (status.status === "no_client") {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex cursor-help">
-            <Badge variant="secondary">No client</Badge>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs">
-          <p>
-            The org has no VoiceLink client id — provision the client first
-          </p>
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  const label = status.is_complete
-    ? "KYC complete"
-    : status.kyc_status ||
-      (status.current_step != null
-        ? `Step ${status.current_step}`
-        : "Not started");
-  const details = [
-    `PAN: ${status.pan_verified ? "verified" : "pending"}`,
-    `Aadhaar: ${status.aadhaar_verified ? "verified" : "pending"}`,
-    ...(status.account_type === "business"
-      ? [`GST: ${status.gst_verified ? "verified" : "pending"}`]
-      : []),
-    ...(status.account_type ? [`Account: ${status.account_type}`] : []),
-  ].join(" · ");
-
+/** True when the org is unmetered (unlimited) on money or credits. */
+function isUnlimited(client: AdminClient): boolean {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex cursor-help">
-          {status.is_complete ? (
-            <Badge className="bg-emerald-600 hover:bg-emerald-600">
-              {label}
-            </Badge>
-          ) : (
-            <Badge variant="secondary">{label}</Badge>
-          )}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-xs">
-        <p>{details}</p>
-      </TooltipContent>
-    </Tooltip>
+    client.money_left_inr === null || client.credits_seconds_remaining === null
   );
 }
+
+/** Balance cell — prefers the INR money balance, falls back to credit minutes
+ * when the backend has not shipped the money fields yet. */
+function balanceDisplay(client: AdminClient): string {
+  if (client.money_left_inr !== undefined) {
+    return formatMoneyBalance(client.money_left_inr);
+  }
+  return formatCredits(client.credits_seconds_remaining);
+}
+
+type SuspendedFilter = "all" | "active" | "suspended";
 
 export default function ClientsPage() {
   const { user, getAccessToken, loading: authLoading } = useAuth();
@@ -186,40 +140,22 @@ export default function ClientsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Assign DID dialog state
-  const [assignTarget, setAssignTarget] = useState<AdminClient | null>(null);
-  const [didNumber, setDidNumber] = useState("");
-  const [clientId, setClientId] = useState("");
+  // Filters
+  const [search, setSearch] = useState("");
+  const [planFilter, setPlanFilter] = useState<string>("all");
+  const [suspendedFilter, setSuspendedFilter] = useState<SuspendedFilter>("all");
+  const [lowBalanceOnly, setLowBalanceOnly] = useState(false);
 
-  // Retry provisioning dialog state
-  const [retryTarget, setRetryTarget] = useState<AdminClient | null>(null);
-  const [retryPassword, setRetryPassword] = useState("");
-
-  // One-click create — the org id currently being (re)provisioned
-  const [creating, setCreating] = useState<number | null>(null);
-
-  // Grant credits dialog state
+  // Grant credits dialog state (kept as a quick row action)
   const [grantTarget, setGrantTarget] = useState<AdminClient | null>(null);
   const [grantMinutes, setGrantMinutes] = useState("");
 
-  // View password dialog state — the revealed copy is kept only while the
-  // dialog is open, never in the row data.
-  const [passwordTarget, setPasswordTarget] = useState<AdminClient | null>(
-    null,
-  );
-  const [revealedPassword, setRevealedPassword] =
-    useState<ClientPasswordResult | null>(null);
-  const [passwordLoading, setPasswordLoading] = useState<number | null>(null);
-
-  // Record password dialog state
-  const [recordTarget, setRecordTarget] = useState<AdminClient | null>(null);
-  const [recordPassword, setRecordPassword] = useState("");
-
-  // On-demand per-org KYC status (fetched per row; never in bulk)
-  const [kycStatuses, setKycStatuses] = useState<
-    Record<number, AdminClientKycStatus>
-  >({});
-  const [kycLoading, setKycLoading] = useState<Record<number, boolean>>({});
+  // New client dialog state
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newPlan, setNewPlan] = useState<string>("trial");
+  const [newCredits, setNewCredits] = useState("");
 
   const fetchClients = useCallback(
     async (showSpinner = false) => {
@@ -247,94 +183,45 @@ export default function ClientsPage() {
     fetchClients();
   }, [authLoading, user, fetchClients]);
 
-  const openAssignDialog = (client: AdminClient) => {
-    setAssignTarget(client);
-    setDidNumber(client.did_number ?? "");
-    setClientId(client.voicelink_client_id ?? "");
-  };
-
-  const openRetryDialog = (client: AdminClient) => {
-    setRetryTarget(client);
-    setRetryPassword("");
-  };
-
-  const openGrantDialog = (client: AdminClient) => {
-    setGrantTarget(client);
-    setGrantMinutes("");
-  };
-
-  const openRecordDialog = (client: AdminClient) => {
-    setRecordTarget(client);
-    setRecordPassword("");
-  };
-
-  const closePasswordDialog = () => {
-    setPasswordTarget(null);
-    setRevealedPassword(null);
-  };
-
-  const copyToClipboard = async (value: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      toast.success(`${label} copied to clipboard`);
-    } catch {
-      toast.error("Failed to copy to clipboard");
-    }
-  };
-
-  const onViewPassword = async (client: AdminClient) => {
-    setPasswordLoading(client.organization_id);
-    try {
-      const token = await getAccessToken();
-      if (!token) throw new Error("Missing access token");
-      const result = await getClientPassword(token, client.organization_id);
-      setRevealedPassword(result);
-      setPasswordTarget(client);
-    } catch (err) {
-      if (err instanceof Error && err.message === NO_STORED_PASSWORD) {
-        toast.error("No password stored for this client");
-      } else {
-        toast.error(
-          err instanceof Error
-            ? err.message
-            : "Failed to fetch the stored password",
-        );
+  const filteredClients = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return clients.filter((c) => {
+      if (q) {
+        const haystack = [
+          c.organization_name,
+          c.owner_email ?? "",
+          `#${c.organization_id}`,
+          String(c.organization_id),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
       }
-    } finally {
-      setPasswordLoading(null);
-    }
-  };
-
-  const onRecordPassword = async () => {
-    if (!recordTarget || recordPassword.length < 8) return;
-    setSubmitting(true);
-    try {
-      const token = await getAccessToken();
-      if (!token) throw new Error("Missing access token");
-      await recordClientPassword(
-        token,
-        recordTarget.organization_id,
-        recordPassword,
-      );
-      toast.success(
-        "Portal password recorded — this does not change it on VoiceLink",
-      );
-      setRecordTarget(null);
-      setRecordPassword("");
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to record the password",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
+      if (planFilter !== "all" && (c.effective_plan ?? "") !== planFilter) {
+        return false;
+      }
+      if (suspendedFilter === "suspended" && !c.suspended) return false;
+      if (suspendedFilter === "active" && c.suspended) return false;
+      if (lowBalanceOnly) {
+        const low =
+          c.money_left_inr != null &&
+          c.money_left_inr < LOW_BALANCE_THRESHOLD_INR;
+        if (!low) return false;
+      }
+      return true;
+    });
+  }, [clients, search, planFilter, suspendedFilter, lowBalanceOnly]);
 
   const grantMinutesNumber = Number(grantMinutes);
   const grantMinutesValid =
     Number.isInteger(grantMinutesNumber) &&
     grantMinutesNumber >= 1 &&
     grantMinutesNumber <= 100000;
+
+  const openGrantDialog = (client: AdminClient) => {
+    setGrantTarget(client);
+    setGrantMinutes("");
+  };
 
   const onGrantCredits = async () => {
     if (!grantTarget || !grantMinutesValid) return;
@@ -350,15 +237,9 @@ export default function ClientsPage() {
       toast.success(
         `Granted ${grantMinutesNumber} minute${grantMinutesNumber === 1 ? "" : "s"} — balance is now ${formatCredits(result.credits_seconds_remaining)}`,
       );
-      // Refresh the row from the authoritative post-grant balance.
-      setClients((prev) =>
-        prev.map((c) =>
-          c.organization_id === result.organization_id
-            ? { ...c, credits_seconds_remaining: result.credits_seconds_remaining }
-            : c,
-        ),
-      );
       setGrantTarget(null);
+      // Refetch so the ₹ balance column reflects the new credit balance.
+      await fetchClients();
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Failed to grant credits",
@@ -368,99 +249,45 @@ export default function ClientsPage() {
     }
   };
 
-  const onCheckKyc = async (client: AdminClient) => {
-    setKycLoading((prev) => ({ ...prev, [client.organization_id]: true }));
-    try {
-      const token = await getAccessToken();
-      if (!token) throw new Error("Missing access token");
-      const result = await getClientKycStatus(token, client.organization_id);
-      setKycStatuses((prev) => ({
-        ...prev,
-        [client.organization_id]: result,
-      }));
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to fetch KYC status",
-      );
-    } finally {
-      setKycLoading((prev) => ({ ...prev, [client.organization_id]: false }));
-    }
+  const newEmailValid = /.+@.+\..+/.test(newEmail.trim());
+  const newCreditsNumber = newCredits.trim() === "" ? 0 : Number(newCredits);
+  const newCreditsValid =
+    newCredits.trim() === "" ||
+    (Number.isInteger(newCreditsNumber) &&
+      newCreditsNumber >= 0 &&
+      newCreditsNumber <= 100000);
+
+  const resetCreateForm = () => {
+    setNewEmail("");
+    setNewName("");
+    setNewPlan("trial");
+    setNewCredits("");
   };
 
-  const onAssignDid = async () => {
-    if (!assignTarget) return;
+  const onCreateClient = async () => {
+    if (!newEmailValid || !newCreditsValid) return;
     setSubmitting(true);
     try {
       const token = await getAccessToken();
       if (!token) throw new Error("Missing access token");
-      const result = await assignDidToClient(token, assignTarget.organization_id, {
-        did_number: didNumber.trim(),
-        ...(clientId.trim() ? { client_id: clientId.trim() } : {}),
+      await createAdminClient(token, {
+        email: newEmail.trim(),
+        ...(newName.trim() ? { name: newName.trim() } : {}),
+        plan: newPlan,
+        ...(newCredits.trim() !== ""
+          ? { initial_credit_minutes: newCreditsNumber }
+          : {}),
       });
-      toast.success(
-        result.created
-          ? "VoiceLink telephony configuration created with the DID"
-          : "DID updated on the existing VoiceLink configuration",
-      );
-      setAssignTarget(null);
+      toast.success(`Client created for ${newEmail.trim()}`);
+      setCreateOpen(false);
+      resetCreateForm();
       await fetchClients();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to assign DID");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const onRetryProvision = async () => {
-    if (!retryTarget) return;
-    setSubmitting(true);
-    try {
-      const token = await getAccessToken();
-      if (!token) throw new Error("Missing access token");
-      const result = await retryProvisionClient(
-        token,
-        retryTarget.organization_id,
-        retryPassword,
-      );
-      if (result.voicelink_status === "provisioned") {
-        toast.success("VoiceLink client provisioned");
-      } else {
-        toast.error(result.voicelink_error || "Provisioning is still pending");
-      }
-      setRetryTarget(null);
-      await fetchClients();
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to retry provisioning",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const onCreate = async (client: AdminClient) => {
-    setCreating(client.organization_id);
-    try {
-      const token = await getAccessToken();
-      if (!token) throw new Error("Missing access token");
-      const result = await createClientForOrg(token, client.organization_id);
-      if (result.voicelink_status === "provisioned") {
-        toast.success(
-          result.action === "linked"
-            ? "Linked the existing VoiceLink client"
-            : "VoiceLink client created",
-        );
-      } else {
-        toast.error(result.voicelink_error || "Provisioning is still pending");
-      }
-      await fetchClients();
-    } catch (err) {
-      // Legacy orgs with no stored password return 409 — fall back to Retry.
       toast.error(
         err instanceof Error ? err.message : "Failed to create client",
       );
     } finally {
-      setCreating(null);
+      setSubmitting(false);
     }
   };
 
@@ -485,40 +312,97 @@ export default function ClientsPage() {
     }
   };
 
+  const hasFilters =
+    search.trim() !== "" ||
+    planFilter !== "all" ||
+    suspendedFilter !== "all" ||
+    lowBalanceOnly;
+
   return (
     <div className="min-h-screen bg-background">
       <div className="stagger container mx-auto max-w-6xl px-4 py-10">
-        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="max-w-3xl">
             <p className="text-eyebrow text-primary">Superuser</p>
             <h1 className="text-h1 mt-1 flex items-center gap-2.5">
               <Users className="h-7 w-7 text-muted-foreground" /> Clients
             </h1>
             <p className="text-body mt-2 text-muted-foreground">
-              Client organizations and their VoiceLink provisioning state.
-              Assign a DID once the client&apos;s channels are purchased, or
-              retry provisioning when it is pending. Use{" "}
-              <Link
-                href="/superadmin"
-                className="font-medium text-foreground underline underline-offset-2 transition-colors hover:text-primary"
-              >
-                superadmin impersonation
-              </Link>{" "}
-              to configure a client&apos;s models.
+              Client organizations, their plan, balance and VoiceLink state.
+              Open{" "}
+              <span className="font-medium text-foreground">Manage</span> on a
+              row to change plan &amp; pricing, provision VoiceLink, view
+              KYC, add ops notes, or suspend the client.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => fetchClients(true)}
-            disabled={loading || refreshing}
-            className="shrink-0"
-          >
-            <RefreshCw
-              className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              New client
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fetchClients(true)}
+              disabled={loading || refreshing}
+            >
+              <RefreshCw
+                className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+              />
+              Refresh
+            </Button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, email or #id"
+              className="pl-9"
             />
-            Refresh
-          </Button>
+          </div>
+          <Select value={planFilter} onValueChange={setPlanFilter}>
+            <SelectTrigger className="w-full sm:w-[150px]">
+              <SelectValue placeholder="Plan" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All plans</SelectItem>
+              {ADMIN_PLANS.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {planLabel(p)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={suspendedFilter}
+            onValueChange={(v) => setSuspendedFilter(v as SuspendedFilter)}
+          >
+            <SelectTrigger className="w-full sm:w-[150px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="active">Active only</SelectItem>
+              <SelectItem value="suspended">Suspended only</SelectItem>
+            </SelectContent>
+          </Select>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <Checkbox
+              checked={lowBalanceOnly}
+              onCheckedChange={(v) => setLowBalanceOnly(v === true)}
+            />
+            Low balance (&lt; {formatInr(LOW_BALANCE_THRESHOLD_INR)})
+          </label>
+          {hasFilters && (
+            <span className="text-xs text-muted-foreground">
+              {filteredClients.length} of {clients.length}
+            </span>
+          )}
         </div>
 
         {loading ? (
@@ -535,36 +419,72 @@ export default function ClientsPage() {
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
               <Users className="h-6 w-6 text-muted-foreground" />
             </div>
-            <p className="text-label text-foreground">No client organizations yet</p>
+            <p className="text-label text-foreground">
+              No client organizations yet
+            </p>
             <p className="text-body max-w-sm text-muted-foreground">
-              New signups appear here automatically.
+              New signups appear here automatically, or use{" "}
+              <span className="font-medium text-foreground">New client</span>{" "}
+              to create one.
+            </p>
+          </div>
+        ) : filteredClients.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/60 bg-card px-6 py-16 text-center shadow-[var(--shadow-card)]">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+              <Search className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <p className="text-label text-foreground">No matching clients</p>
+            <p className="text-body max-w-sm text-muted-foreground">
+              No clients match the current search and filters.
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)]">
+          <div className="overflow-x-auto rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)]">
             <Table>
               <TableHeader>
                 <TableRow className="border-border/50 hover:bg-transparent">
-                  <TableHead className="text-label text-muted-foreground">Organization</TableHead>
-                  <TableHead className="text-label text-muted-foreground">Owner email</TableHead>
-                  <TableHead className="text-label text-muted-foreground">VoiceLink status</TableHead>
-                  <TableHead className="text-label text-muted-foreground">Client ID</TableHead>
-                  <TableHead className="text-label text-muted-foreground">DID</TableHead>
-                  <TableHead className="text-label text-muted-foreground">Credits</TableHead>
-                  <TableHead className="text-label text-muted-foreground">KYC</TableHead>
-                  <TableHead className="text-label text-right text-muted-foreground">Actions</TableHead>
+                  <TableHead className="text-label text-muted-foreground">
+                    Organization
+                  </TableHead>
+                  <TableHead className="text-label text-muted-foreground">
+                    Owner email
+                  </TableHead>
+                  <TableHead className="text-label text-muted-foreground">
+                    Plan
+                  </TableHead>
+                  <TableHead className="text-label text-muted-foreground">
+                    VoiceLink
+                  </TableHead>
+                  <TableHead className="text-label text-muted-foreground">
+                    DID
+                  </TableHead>
+                  <TableHead className="text-label text-right text-muted-foreground">
+                    ₹ Balance
+                  </TableHead>
+                  <TableHead className="text-label text-right text-muted-foreground">
+                    ₹ Spent
+                  </TableHead>
+                  <TableHead className="text-label text-muted-foreground">
+                    Status
+                  </TableHead>
+                  <TableHead className="text-label text-right text-muted-foreground">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {clients.map((client) => (
+                {filteredClients.map((client) => (
                   <TableRow
                     key={client.organization_id}
                     className="border-border/50 transition-colors hover:bg-muted/40"
                   >
                     <TableCell>
-                      <div className="font-medium tabular-nums">
+                      <Link
+                        href={`/clients/${client.organization_id}`}
+                        className="font-medium tabular-nums hover:underline"
+                      >
                         #{client.organization_id}
-                      </div>
+                      </Link>
                       <div className="max-w-[180px] truncate text-xs text-muted-foreground">
                         {client.organization_name}
                       </div>
@@ -573,95 +493,38 @@ export default function ClientsPage() {
                       {client.owner_email ?? "—"}
                     </TableCell>
                     <TableCell>
-                      <VoiceLinkStatusBadge client={client} />
+                      <PlanBadge plan={client.effective_plan} />
                     </TableCell>
                     <TableCell>
-                      <span className="font-mono text-sm tabular-nums">
-                        {client.live_client_id ?? client.voicelink_client_id ?? "—"}
-                      </span>
-                      {client.voicelink_username && (
-                        <div className="text-xs text-muted-foreground">
-                          {client.voicelink_username}
-                        </div>
-                      )}
+                      <VoiceLinkStatusBadge client={client} />
                     </TableCell>
                     <TableCell className="font-mono text-sm tabular-nums">
                       {client.did_number ??
                         (client.has_voicelink_config ? (
                           <span className="font-sans text-muted-foreground">
-                            Config, no DID
+                            No DID
                           </span>
                         ) : (
                           "—"
                         ))}
                     </TableCell>
-                    <TableCell className="text-sm tabular-nums">
-                      {client.credits_seconds_remaining == null ? (
+                    <TableCell className="text-right text-sm tabular-nums">
+                      {isUnlimited(client) ? (
                         <span className="text-muted-foreground">Unlimited</span>
                       ) : (
-                        formatCredits(client.credits_seconds_remaining)
+                        balanceDisplay(client)
                       )}
+                    </TableCell>
+                    <TableCell className="text-right text-sm tabular-nums">
+                      {client.money_spent_inr !== undefined
+                        ? formatInr(client.money_spent_inr)
+                        : "—"}
                     </TableCell>
                     <TableCell>
-                      {kycStatuses[client.organization_id] ? (
-                        <div className="flex items-center gap-1">
-                          <KycStatusBadge
-                            status={kycStatuses[client.organization_id]}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0"
-                            onClick={() => onCheckKyc(client)}
-                            disabled={!!kycLoading[client.organization_id]}
-                          >
-                            {kycLoading[client.organization_id] ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <RefreshCw className="h-3 w-3" />
-                            )}
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => onCheckKyc(client)}
-                          disabled={!!kycLoading[client.organization_id]}
-                        >
-                          {kycLoading[client.organization_id] ? (
-                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-                          )}
-                          KYC
-                        </Button>
-                      )}
+                      <SuspendedBadge suspended={client.suspended} />
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        {client.live_state !== "active" && (
-                          <Button
-                            size="sm"
-                            onClick={() => onCreate(client)}
-                            disabled={creating === client.organization_id}
-                          >
-                            {creating === client.organization_id ? (
-                              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <UserPlus className="mr-1 h-3.5 w-3.5" />
-                            )}
-                            Create
-                          </Button>
-                        )}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openAssignDialog(client)}
-                        >
-                          <Phone className="mr-1 h-3.5 w-3.5" />
-                          Assign DID
-                        </Button>
+                      <div className="flex items-center justify-end gap-1.5">
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span className="inline-flex">
@@ -669,9 +532,7 @@ export default function ClientsPage() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => openGrantDialog(client)}
-                                disabled={
-                                  client.credits_seconds_remaining == null
-                                }
+                                disabled={isUnlimited(client)}
                               >
                                 <Coins className="h-3.5 w-3.5" />
                               </Button>
@@ -679,64 +540,9 @@ export default function ClientsPage() {
                           </TooltipTrigger>
                           <TooltipContent side="top">
                             <p>
-                              {client.credits_seconds_remaining == null
+                              {isUnlimited(client)
                                 ? "Unmetered org (unlimited) — granting would meter it"
                                 : "Grant call credits (minutes)"}
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => onViewPassword(client)}
-                              disabled={
-                                passwordLoading === client.organization_id
-                              }
-                            >
-                              {passwordLoading === client.organization_id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Eye className="h-3.5 w-3.5" />
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top">
-                            <p>View the stored VoiceLink portal password</p>
-                          </TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openRecordDialog(client)}
-                            >
-                              <KeyRound className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top">
-                            <p>
-                              Record the portal password for reference (does
-                              not change it on VoiceLink)
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openRetryDialog(client)}
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top">
-                            <p>
-                              Retry with a specific password (legacy orgs
-                              without a stored secret)
                             </p>
                           </TooltipContent>
                         </Tooltip>
@@ -752,12 +558,15 @@ export default function ClientsPage() {
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent side="top">
-                            <p>
-                              Impersonate the owner (new tab) to configure
-                              their models
-                            </p>
+                            <p>Impersonate the owner (new tab)</p>
                           </TooltipContent>
                         </Tooltip>
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/clients/${client.organization_id}`}>
+                            Manage
+                            <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                          </Link>
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -766,70 +575,6 @@ export default function ClientsPage() {
             </Table>
           </div>
         )}
-
-        {/* Assign DID dialog */}
-        <Dialog
-          open={assignTarget !== null}
-          onOpenChange={(open) => !open && setAssignTarget(null)}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Assign DID</DialogTitle>
-              <DialogDescription>
-                Creates or updates the org&apos;s VoiceLink telephony
-                configuration with this DID and marks it default for outbound.
-                The client can call once the DID and channels are mapped in
-                the VoiceLink portal.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="assign-did-number">DID number</Label>
-                <Input
-                  id="assign-did-number"
-                  value={didNumber}
-                  onChange={(e) => setDidNumber(e.target.value)}
-                  placeholder="919484959244"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="assign-client-id">
-                  VoiceLink client ID (optional)
-                </Label>
-                <Input
-                  id="assign-client-id"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  placeholder={
-                    assignTarget?.voicelink_client_id ?? "e.g. 474"
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  Defaults to the org&apos;s provisioned client ID when left
-                  empty.
-                </p>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setAssignTarget(null)}
-                disabled={submitting}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={onAssignDid}
-                disabled={submitting || !didNumber.trim()}
-              >
-                {submitting && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Assign DID
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {/* Grant credits dialog */}
         <Dialog
@@ -843,7 +588,7 @@ export default function ClientsPage() {
                 Adds call credits to the metered balance of{" "}
                 {grantTarget?.owner_email ?? "this organization"} (1 credit = 1
                 minute of call time). Current balance:{" "}
-                {formatCredits(grantTarget?.credits_seconds_remaining)}.
+                {grantTarget ? balanceDisplay(grantTarget) : "—"}.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-2">
@@ -874,168 +619,102 @@ export default function ClientsPage() {
                 onClick={onGrantCredits}
                 disabled={submitting || !grantMinutesValid}
               >
-                {submitting && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
+                {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Grant credits
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
-        {/* Retry provisioning dialog */}
+        {/* New client dialog */}
         <Dialog
-          open={retryTarget !== null}
-          onOpenChange={(open) => !open && setRetryTarget(null)}
+          open={createOpen}
+          onOpenChange={(open) => {
+            setCreateOpen(open);
+            if (!open) resetCreateForm();
+          }}
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Retry VoiceLink provisioning</DialogTitle>
+              <DialogTitle>New client</DialogTitle>
               <DialogDescription>
-                Re-runs client creation for{" "}
-                {retryTarget?.owner_email ?? "this organization"} using the
-                stored username
-                {retryTarget?.voicelink_username
-                  ? ` (${retryTarget.voicelink_username})`
-                  : ""}
-                . The password below is set on the new VoiceLink client and an
-                encrypted copy is kept as the org&apos;s password record.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-2">
-              <Label htmlFor="retry-password">New VoiceLink password</Label>
-              <Input
-                id="retry-password"
-                type="password"
-                value={retryPassword}
-                onChange={(e) => setRetryPassword(e.target.value)}
-                placeholder="Minimum 8 characters"
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setRetryTarget(null)}
-                disabled={submitting}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={onRetryProvision}
-                disabled={submitting || retryPassword.length < 8}
-              >
-                {submitting && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Retry provisioning
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* View password dialog */}
-        <Dialog
-          open={passwordTarget !== null}
-          onOpenChange={(open) => !open && closePasswordDialog()}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>VoiceLink portal password</DialogTitle>
-              <DialogDescription>
-                Stored copy of the portal password for{" "}
-                {passwordTarget?.owner_email ?? "this organization"}. This is
-                a reference record — if the password was changed in the
-                VoiceLink portal, record the new one here.
+                Creates a client organization for this email. Pick a plan and,
+                optionally, seed an initial credit balance.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              {revealedPassword?.username && (
-                <div className="space-y-2">
-                  <Label>Username</Label>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 truncate rounded-md border border-border/60 bg-muted px-3 py-2 font-mono text-sm">
-                      {revealedPassword.username}
-                    </code>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        copyToClipboard(revealedPassword.username!, "Username")
-                      }
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              )}
               <div className="space-y-2">
-                <Label>Password</Label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 truncate rounded-md border border-border/60 bg-muted px-3 py-2 font-mono text-sm">
-                    {revealedPassword?.password}
-                  </code>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      revealedPassword &&
-                      copyToClipboard(revealedPassword.password, "Password")
-                    }
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
+                <Label htmlFor="new-email">Owner email</Label>
+                <Input
+                  id="new-email"
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="owner@company.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new-name">Organization name (optional)</Label>
+                <Input
+                  id="new-name"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Acme Inc."
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="new-plan">Plan</Label>
+                  <Select value={newPlan} onValueChange={setNewPlan}>
+                    <SelectTrigger id="new-plan">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ADMIN_PLANS.map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {planLabel(p)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-credits">Initial credits (min)</Label>
+                  <Input
+                    id="new-credits"
+                    type="number"
+                    min={0}
+                    max={100000}
+                    step={1}
+                    value={newCredits}
+                    onChange={(e) => setNewCredits(e.target.value)}
+                    placeholder="optional"
+                  />
                 </div>
               </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={closePasswordDialog}>
-                Close
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Record password dialog */}
-        <Dialog
-          open={recordTarget !== null}
-          onOpenChange={(open) => !open && setRecordTarget(null)}
-        >
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Record portal password</DialogTitle>
-              <DialogDescription>
-                This records the portal password for{" "}
-                {recordTarget?.owner_email ?? "this organization"} for
-                reference — it does not change it on VoiceLink. Set the actual
-                password in the VoiceLink portal, then record it here.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-2">
-              <Label htmlFor="record-password">Portal password</Label>
-              <Input
-                id="record-password"
-                type="password"
-                value={recordPassword}
-                onChange={(e) => setRecordPassword(e.target.value)}
-                placeholder="Minimum 8 characters"
-              />
+              {!newCreditsValid && (
+                <p className="text-xs text-destructive">
+                  Credits must be a whole number between 0 and 100,000.
+                </p>
+              )}
             </div>
             <DialogFooter>
               <Button
                 variant="outline"
-                onClick={() => setRecordTarget(null)}
+                onClick={() => {
+                  setCreateOpen(false);
+                  resetCreateForm();
+                }}
                 disabled={submitting}
               >
                 Cancel
               </Button>
               <Button
-                onClick={onRecordPassword}
-                disabled={submitting || recordPassword.length < 8}
+                onClick={onCreateClient}
+                disabled={submitting || !newEmailValid || !newCreditsValid}
               >
-                {submitting && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Record password
+                {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Create client
               </Button>
             </DialogFooter>
           </DialogContent>

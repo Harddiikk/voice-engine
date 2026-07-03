@@ -27,6 +27,74 @@ def _user(org=4):
 
 
 @pytest.mark.asyncio
+async def test_balance_carries_money_fields(monkeypatch):
+    """GET /balance surfaces the ₹ money view alongside the existing fields."""
+    monkeypatch.setattr(billing.payu_client, "is_configured", lambda: True)
+    monkeypatch.setattr(billing.razorpay_client, "is_configured", lambda: False)
+    monkeypatch.setattr(billing, "get_org_plan", AsyncMock(return_value="starter"))
+    monkeypatch.setattr(billing, "features_for_plan", lambda plan: {"api": True, "mcp": False})
+    monkeypatch.setattr(
+        billing,
+        "get_org_money",
+        AsyncMock(
+            return_value={
+                "balance_seconds": 120000,
+                "unlimited": False,
+                "per_minute_inr": 8.0,
+                "money_left_inr": 16000.0,
+                "spent_seconds": 23610,
+                "money_spent_inr": 3148.0,
+            }
+        ),
+    )
+    with (
+        patch.object(billing.db_client, "get_free_call_seconds_remaining", new=AsyncMock(return_value=120000)),
+        patch.object(billing.db_client, "sum_on_hold_seconds", new=AsyncMock(return_value=0)),
+    ):
+        res = await billing.get_balance(user=_user())
+
+    assert res["per_minute_inr"] == 8.0
+    assert res["money_left_inr"] == 16000.0
+    assert res["money_spent_inr"] == 3148.0
+    # Existing fields still present.
+    assert res["balance_seconds"] == 120000
+    assert res["unlimited"] is False
+
+
+@pytest.mark.asyncio
+async def test_balance_money_left_none_when_unlimited(monkeypatch):
+    """Unlimited orgs report no ₹-remaining (None) but still expose rate + spend."""
+    monkeypatch.setattr(billing.payu_client, "is_configured", lambda: True)
+    monkeypatch.setattr(billing.razorpay_client, "is_configured", lambda: False)
+    monkeypatch.setattr(billing, "get_org_plan", AsyncMock(return_value="trial"))
+    monkeypatch.setattr(billing, "features_for_plan", lambda plan: {"api": False, "mcp": False})
+    monkeypatch.setattr(
+        billing,
+        "get_org_money",
+        AsyncMock(
+            return_value={
+                "balance_seconds": None,
+                "unlimited": True,
+                "per_minute_inr": 8.0,
+                "money_left_inr": None,
+                "spent_seconds": 0,
+                "money_spent_inr": 0.0,
+            }
+        ),
+    )
+    with (
+        patch.object(billing.db_client, "get_free_call_seconds_remaining", new=AsyncMock(return_value=None)),
+        patch.object(billing.db_client, "sum_on_hold_seconds", new=AsyncMock(return_value=0)),
+    ):
+        res = await billing.get_balance(user=_user())
+
+    assert res["unlimited"] is True
+    assert res["money_left_inr"] is None
+    assert res["per_minute_inr"] == 8.0
+    assert res["money_spent_inr"] == 0.0
+
+
+@pytest.mark.asyncio
 async def test_payu_initiate_creates_txn_and_returns_signed_params(monkeypatch):
     monkeypatch.setattr(billing.payu_client, "is_configured", lambda: True)
     monkeypatch.setattr(

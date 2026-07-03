@@ -8,6 +8,7 @@ layer patched at the route module's ``db_client`` attribute.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -21,6 +22,37 @@ from api.services.voicelink_clients.secrets import (
 )
 
 _PROVISION_KEY = Fernet.generate_key().decode()
+
+
+@pytest.fixture(autouse=True)
+def _stub_billing_helpers():
+    """The list endpoint enriches each row with effective plan + money (per-org
+    async reads). Stub them with sane defaults so these VoiceLink-focused tests
+    don't hit the real DB; tests that care assert the money/plan fields elsewhere.
+    """
+    money = {
+        "balance_seconds": None,
+        "unlimited": True,
+        "per_minute_inr": 3.0,
+        "money_left_inr": None,
+        "spent_seconds": 0,
+        "money_spent_inr": 0.0,
+    }
+    with (
+        patch(
+            "api.routes.admin_clients.get_org_plan",
+            new=AsyncMock(return_value="trial"),
+        ),
+        patch(
+            "api.routes.admin_clients.get_org_money",
+            new=AsyncMock(return_value=money),
+        ),
+        patch(
+            "api.routes.admin_clients.is_org_suspended",
+            new=AsyncMock(return_value=False),
+        ),
+    ):
+        yield
 
 
 def _superuser():

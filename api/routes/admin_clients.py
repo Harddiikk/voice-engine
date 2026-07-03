@@ -12,18 +12,33 @@ row. All endpoints require superuser privileges.
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 
 from api.db import db_client
+from api.db.credit_ledger_client import ALREADY_APPLIED, UNMETERED
 from api.db.models import OrganizationModel, UserModel
 from api.schemas.admin_clients import (
+    AddNoteRequest,
+    AdminAuditItem,
+    AdminAuditListResponse,
+    AdminClientDetailResponse,
     AdminClientItem,
+    AdminClientUsage,
     AdminClientsListResponse,
     AdminKycStatusResponse,
+    AdminMoney,
+    AdminNotesResponse,
+    AdminPricing,
+    AdminProfileResponse,
+    AdminProfileUpdateRequest,
     AssignDidRequest,
     AssignDidResponse,
+    ChargeSetupFeeRequest,
+    ChargeSetupFeeResponse,
     ClientPasswordResponse,
+    CreateClientAccountRequest,
+    CreateClientAccountResponse,
     CreateClientRequest,
     CreateClientResponse,
     GrantCreditsRequest,
@@ -33,7 +48,25 @@ from api.schemas.admin_clients import (
     RetryProvisionRequest,
     RetryProvisionResponse,
 )
-from api.services.auth.depends import get_superuser
+from api.services.admin.audit import record_admin_action
+from api.services.admin.profile import (
+    append_note,
+    get_admin_profile,
+    get_org_money,
+    get_org_pricing,
+    is_org_suspended,
+    setup_fee_seconds,
+    update_admin_profile,
+)
+from api.services.auth.depends import (
+    create_user_configuration_with_mps_key,
+    get_superuser,
+)
+from api.services.plans import (
+    ASSIGNABLE_PLANS,
+    features_for_plan,
+    get_org_plan,
+)
 from api.services.telephony_marketplace import persist_org_did
 from api.services.voicelink_clients import (
     VoiceLinkClientError,
@@ -41,6 +74,7 @@ from api.services.voicelink_clients import (
     generate_client_password,
     get_voicelink_clients_client,
     provision_voicelink_client,
+    stash_voicelink_signup_secret,
 )
 from api.services.voicelink_clients.secrets import (
     decrypt_provision_secret,
@@ -51,8 +85,13 @@ from api.services.voicelink_kyc import (
     get_kyc_client,
     resolve_org_voicelink_client_id,
 )
+from api.utils.auth import hash_password
 
 router = APIRouter(prefix="/admin/clients", tags=["admin-clients"])
+
+# Audit list lives at /admin/audit (not under /admin/clients) — a second router
+# with the /admin prefix, mounted alongside the clients router.
+audit_router = APIRouter(prefix="/admin", tags=["admin-audit"])
 
 VOICELINK_PROVIDER = "voicelink"
 VOICELINK_STATUS_PROVISIONED = "provisioned"
@@ -184,6 +223,12 @@ async def list_clients(
             else:
                 live_state = "missing"
 
+        # SaaS billing view — effective plan + money-in-INR. These are per-org
+        # async reads (profile + balance + spend); acceptable for an admin list.
+        plan = await get_org_plan(organization.id)
+        money = await get_org_money(organization.id)
+        suspended = await is_org_suspended(organization.id)
+
         clients.append(
             AdminClientItem(
                 organization_id=organization.id,
@@ -201,6 +246,11 @@ async def list_clients(
                 live_state=live_state,
                 live_client_id=live_client_id,
                 credits_seconds_remaining=organization.free_call_seconds_remaining,
+                effective_plan=plan,
+                per_minute_inr=money["per_minute_inr"],
+                money_left_inr=money["money_left_inr"],
+                money_spent_inr=money["money_spent_inr"],
+                suspended=suspended,
             )
         )
 
@@ -525,21 +575,13 @@ async def record_client_password(
     )
 
 
-@router.get("/{org_id}/kyc-status", response_model=AdminKycStatusResponse)
-async def get_client_kyc_status(
-    org_id: int,
-    user: UserModel = Depends(get_superuser),
-) -> AdminKycStatusResponse:
-    """On-demand KYC status for a single client org (one VoiceLink call).
+async def _resolve_kyc_status(org_id: int) -> AdminKycStatusResponse:
+    """Resolve a single org's VoiceLink KYC status (one upstream call).
 
-    Resolves the org's VoiceLink ``client_id`` exactly like the self-serve
-    KYC routes do (``resolve_org_voicelink_client_id``). Fetched per row on
-    demand rather than in the list endpoint to avoid N upstream calls.
+    Shared by the on-demand KYC endpoint and the per-client detail view.
+    Assumes the org exists (callers 404 first). Raises HTTPException(502) when
+    the VoiceLink call fails.
     """
-    organization = await db_client.get_organization_by_id(org_id)
-    if organization is None:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
     kyc_client = get_kyc_client()
     if not kyc_client.is_configured:
         return AdminKycStatusResponse(status="disabled", enabled=False)
@@ -571,4 +613,373 @@ async def get_client_kyc_status(
         is_complete=data.get("is_complete"),
         current_step=data.get("current_step"),
         account_type=data.get("account_type"),
+    )
+
+
+@router.get("/{org_id}/kyc-status", response_model=AdminKycStatusResponse)
+async def get_client_kyc_status(
+    org_id: int,
+    user: UserModel = Depends(get_superuser),
+) -> AdminKycStatusResponse:
+    """On-demand KYC status for a single client org (one VoiceLink call).
+
+    Resolves the org's VoiceLink ``client_id`` exactly like the self-serve
+    KYC routes do (``resolve_org_voicelink_client_id``). Fetched per row on
+    demand rather than in the list endpoint to avoid N upstream calls.
+    """
+    organization = await db_client.get_organization_by_id(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    return await _resolve_kyc_status(org_id)
+
+
+async def _org_did_number(org_id: int) -> tuple[Optional[str], bool]:
+    """The org's default-outbound VoiceLink DID + whether it has any config."""
+    configs = await db_client.list_telephony_configurations_by_provider(
+        org_id, VOICELINK_PROVIDER
+    )
+    did_number = next(
+        (
+            (config.credentials or {}).get("did_number")
+            for config in _ordered_voicelink_configs(configs)
+            if (config.credentials or {}).get("did_number")
+        ),
+        None,
+    )
+    return did_number, bool(configs)
+
+
+async def _client_usage(org_id: int, money: dict) -> Optional[AdminClientUsage]:
+    """Best-effort rolling usage summary. None if the rollup can't be computed."""
+    try:
+        overview = await db_client.get_organization_overview(org_id, "month")
+        totals = overview.get("totals") or {}
+        return AdminClientUsage(
+            period=overview.get("period", "month"),
+            total_calls=int(totals.get("total_calls") or 0),
+            total_minutes=float(totals.get("total_minutes") or 0.0),
+            connected_calls=int(totals.get("connected_calls") or 0),
+            money_spent_inr=money["money_spent_inr"],
+        )
+    except Exception as exc:  # pragma: no cover - usage is a nice-to-have
+        logger.warning(f"Usage rollup failed for org {org_id}: {exc}")
+        return None
+
+
+@router.get("/{org_id}", response_model=AdminClientDetailResponse)
+async def get_client_detail(
+    org_id: int,
+    user: UserModel = Depends(get_superuser),
+) -> AdminClientDetailResponse:
+    """Full per-client admin view: identity, VoiceLink state, plan + features,
+    pricing, money, suspend flag, ops notes, KYC, and a usage rollup.
+
+    Uses the stored VoiceLink fields (a lighter view than the list's live
+    reconcile). KYC degrades to ``status="error"`` if VoiceLink is unreachable
+    so the rest of the detail still renders.
+    """
+    organization = await db_client.get_organization_with_users(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    owner = _resolve_owner(organization)
+    did_number, has_config = await _org_did_number(org_id)
+
+    profile = await get_admin_profile(org_id)
+    plan = await get_org_plan(org_id)
+    pricing = await get_org_pricing(org_id)
+    money = await get_org_money(org_id)
+
+    try:
+        kyc = await _resolve_kyc_status(org_id)
+    except HTTPException:
+        kyc = AdminKycStatusResponse(status="error", enabled=True)
+
+    usage = await _client_usage(org_id, money)
+
+    return AdminClientDetailResponse(
+        organization_id=organization.id,
+        organization_name=organization.provider_id,
+        owner_user_id=owner.id if owner else None,
+        owner_email=owner.email if owner else None,
+        owner_provider_id=owner.provider_id if owner else None,
+        created_at=organization.created_at,
+        voicelink_status=organization.voicelink_status,
+        voicelink_client_id=organization.voicelink_client_id,
+        voicelink_username=organization.voicelink_username,
+        voicelink_error=organization.voicelink_error,
+        has_voicelink_config=has_config,
+        did_number=did_number,
+        plan=plan,
+        plan_override=profile.get("plan_override"),
+        features=features_for_plan(plan),
+        pricing=AdminPricing(**pricing),
+        money=AdminMoney(**money),
+        suspended=bool(profile.get("suspended")),
+        notes=list(profile.get("notes") or []),
+        kyc=kyc,
+        usage=usage,
+    )
+
+
+@router.patch("/{org_id}/profile", response_model=AdminProfileResponse)
+async def update_client_profile(
+    org_id: int,
+    request: AdminProfileUpdateRequest,
+    user: UserModel = Depends(get_superuser),
+) -> AdminProfileResponse:
+    """Partial per-client profile update — plan override, custom pricing,
+    suspend. Only the fields present in the request body are changed; send a
+    pricing/plan field as ``null`` to clear the override back to the default.
+    """
+    organization = await db_client.get_organization_by_id(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    sent = request.model_fields_set
+    changes = {field: getattr(request, field) for field in sent}
+    if not changes:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Forward only the fields the caller actually sent, so unset fields keep
+    # their current value (the sentinel default in update_admin_profile).
+    await update_admin_profile(org_id, **changes)
+
+    await record_admin_action(
+        actor_user_id=user.id,
+        target_organization_id=org_id,
+        action="update_profile",
+        detail=changes,
+    )
+    logger.info(f"Superuser {user.id} updated profile for org {org_id}: {changes}")
+
+    profile = await get_admin_profile(org_id)
+    plan = await get_org_plan(org_id)
+    pricing = await get_org_pricing(org_id)
+    return AdminProfileResponse(
+        organization_id=org_id,
+        plan=plan,
+        plan_override=profile.get("plan_override"),
+        features=features_for_plan(plan),
+        pricing=AdminPricing(**pricing),
+        suspended=bool(profile.get("suspended")),
+    )
+
+
+@router.post("/{org_id}/notes", response_model=AdminNotesResponse)
+async def add_client_note(
+    org_id: int,
+    request: AddNoteRequest,
+    user: UserModel = Depends(get_superuser),
+) -> AdminNotesResponse:
+    """Append a timestamped note to the client's admin ops log."""
+    organization = await db_client.get_organization_by_id(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    profile = await append_note(org_id, by_user_id=user.id, text=request.text)
+    await record_admin_action(
+        actor_user_id=user.id,
+        target_organization_id=org_id,
+        action="add_note",
+        detail={"text": request.text.strip()},
+    )
+    return AdminNotesResponse(
+        organization_id=org_id, notes=list(profile.get("notes") or [])
+    )
+
+
+@router.post("/{org_id}/charge-setup-fee", response_model=ChargeSetupFeeResponse)
+async def charge_setup_fee(
+    org_id: int,
+    request: Optional[ChargeSetupFeeRequest] = None,
+    user: UserModel = Depends(get_superuser),
+) -> ChargeSetupFeeResponse:
+    """Charge the client's one-time setup fee against their credit balance.
+
+    Uses the client's configured ``setup_fee_inr`` (or an explicit
+    ``amount_inr`` override), converted to credit-seconds at the client's
+    per-minute rate. 400 when no fee is configured, 409 for unmetered orgs
+    (nothing to charge against), 402 when the balance can't cover it.
+    """
+    organization = await db_client.get_organization_by_id(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    pricing = await get_org_pricing(org_id)
+    rate = pricing["per_minute_inr"]
+    fee_inr = (request.amount_inr if request and request.amount_inr else None) or int(
+        pricing["setup_fee_inr"]
+    )
+    if fee_inr <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No setup fee configured for this client (and no amount_inr given)",
+        )
+
+    seconds = setup_fee_seconds(fee_inr, rate)
+    if seconds <= 0:
+        raise HTTPException(
+            status_code=400, detail="Setup fee converts to zero credit-seconds"
+        )
+
+    result = await db_client.charge_purchase_tx(
+        org_id, seconds, kind="setup_fee", description=f"Setup fee — ₹{fee_inr}"
+    )
+    if result == UNMETERED:
+        raise HTTPException(
+            status_code=409,
+            detail="Organization is unmetered (unlimited credits) — nothing to charge",
+        )
+    if result == ALREADY_APPLIED:
+        raise HTTPException(status_code=409, detail="Setup fee already charged")
+    if result is None:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Insufficient balance to charge the setup fee "
+                f"(needs {seconds}s of credit)"
+            ),
+        )
+
+    await record_admin_action(
+        actor_user_id=user.id,
+        target_organization_id=org_id,
+        action="charge_setup_fee",
+        detail={"fee_inr": fee_inr, "charged_seconds": seconds, "new_balance": result},
+    )
+    logger.info(
+        f"Superuser {user.id} charged setup fee ₹{fee_inr} ({seconds}s) to "
+        f"org {org_id}; balance now {result}s"
+    )
+    money = await get_org_money(org_id)
+    return ChargeSetupFeeResponse(
+        organization_id=org_id,
+        fee_inr=fee_inr,
+        charged_seconds=seconds,
+        credits_seconds_remaining=result,
+        money=AdminMoney(**money),
+    )
+
+
+@router.post("", response_model=CreateClientAccountResponse)
+async def create_client_account(
+    request: CreateClientAccountRequest,
+    user: UserModel = Depends(get_superuser),
+) -> CreateClientAccountResponse:
+    """Create a brand-new client: owner user + organization, then optionally set
+    the plan and grant starter credits.
+
+    A random login password is generated and returned once (superuser-only) so
+    the operator can hand it to the client; the owner should change it after
+    first login. The signup-time default model/MPS configuration is created
+    best-effort (same as self-signup) so the client is ready to run.
+    """
+    email = request.email.strip().lower()
+    existing = await db_client.get_user_by_email(email)
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Generated password (the client never receives the plaintext except via the
+    # operator). Hashed for the platform login; stashed for VoiceLink provisioning.
+    password = generate_client_password()
+    owner = await db_client.create_user_with_email(
+        email=email, password_hash=hash_password(password), name=request.name
+    )
+
+    org_provider_id = f"org_{owner.provider_id}"
+    organization, _ = await db_client.get_or_create_organization_by_provider_id(
+        org_provider_id=org_provider_id, user_id=owner.id
+    )
+    await db_client.add_user_to_organization(owner.id, organization.id)
+    await db_client.update_user_selected_organization(owner.id, organization.id)
+
+    # Best-effort default configuration (mirrors auth.signup — never fatal).
+    try:
+        mps_config = await create_user_configuration_with_mps_key(
+            owner.id, organization.id, owner.provider_id
+        )
+        if mps_config:
+            await db_client.update_user_configuration(owner.id, mps_config)
+    except Exception:
+        logger.warning(
+            "Failed to create default configuration for admin-created client",
+            exc_info=True,
+        )
+
+    # Best-effort: stash the generated password so the org's VoiceLink client can
+    # be provisioned later with a matching password.
+    await stash_voicelink_signup_secret(
+        organization_id=organization.id, email=email, password=password
+    )
+
+    if request.plan:
+        await update_admin_profile(organization.id, plan_override=request.plan)
+
+    credits_remaining = organization.free_call_seconds_remaining
+    if request.initial_credit_minutes:
+        granted = await db_client.grant_credits_tx(
+            organization.id,
+            request.initial_credit_minutes * 60,
+            created_by=user.id,
+            description=f"Admin initial grant: {request.initial_credit_minutes} minutes",
+        )
+        if granted is not None:
+            credits_remaining = granted
+
+    plan = await get_org_plan(organization.id)
+    await record_admin_action(
+        actor_user_id=user.id,
+        target_organization_id=organization.id,
+        action="create_client",
+        detail={
+            "email": email,
+            "plan": request.plan,
+            "initial_credit_minutes": request.initial_credit_minutes,
+        },
+    )
+    logger.info(
+        f"Superuser {user.id} created client org {organization.id} "
+        f"(owner {owner.id}, plan={plan})"
+    )
+
+    return CreateClientAccountResponse(
+        organization_id=organization.id,
+        owner_user_id=owner.id,
+        owner_email=owner.email,
+        organization_name=organization.provider_id,
+        plan=plan,
+        credits_seconds_remaining=credits_remaining,
+        temporary_password=password,
+        note=(
+            "Owner login created with a generated password (returned once) — "
+            "the owner should change it after first login."
+        ),
+    )
+
+
+@audit_router.get("/audit", response_model=AdminAuditListResponse)
+async def list_audit(
+    org_id: Optional[int] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    user: UserModel = Depends(get_superuser),
+) -> AdminAuditListResponse:
+    """Admin audit log (newest first), optionally filtered to one client org."""
+    rows = await db_client.list_admin_audit(
+        target_organization_id=org_id, limit=limit, offset=offset
+    )
+    return AdminAuditListResponse(
+        items=[
+            AdminAuditItem(
+                id=row.id,
+                actor_user_id=row.actor_user_id,
+                target_organization_id=row.target_organization_id,
+                action=row.action,
+                detail=row.detail,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
     )

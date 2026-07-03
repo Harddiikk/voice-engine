@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from api.constants import CREDIT_PACKS, RAZORPAY_KEY_ID, UI_APP_URL
 from api.db import db_client
 from api.db.models import UserModel
+from api.services.admin.profile import get_org_money
 from api.services.auth.depends import get_superuser, get_user
 from api.services.billing import payu_client, razorpay_client
 from api.services.plans import features_for_plan, get_org_plan
@@ -51,6 +52,9 @@ async def get_balance(user: UserModel = Depends(get_user)):
     org = _org(user)
     balance = await db_client.get_free_call_seconds_remaining(org)
     plan = await get_org_plan(org)
+    # Money view (INR) at the client's effective per-minute rate: what the
+    # credit balance is worth and what's been spent.
+    money = await get_org_money(org)
     return {
         "balance_seconds": balance,
         "unlimited": balance is None,
@@ -64,6 +68,10 @@ async def get_balance(user: UserModel = Depends(get_user)):
         "packs": CREDIT_PACKS,
         "plan": plan,
         "features": features_for_plan(plan),
+        # ₹ view: rate + balance worth (None when unlimited) + spend-to-date.
+        "per_minute_inr": money["per_minute_inr"],
+        "money_left_inr": money["money_left_inr"],
+        "money_spent_inr": money["money_spent_inr"],
     }
 
 
