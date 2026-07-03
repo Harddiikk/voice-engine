@@ -3,14 +3,8 @@ import { Database, FileText, SlidersHorizontal, UserPlus } from "lucide-react";
 import { CrmSection } from "@/components/CrmSection";
 import { IntegrationHero } from "@/components/integrations/IntegrationHero";
 import { PageShell } from "@/components/layout/PageShell";
+import { SectionCard } from "@/components/layout/SectionCard";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 
 const highlights = [
   {
@@ -41,27 +35,19 @@ export default function CrmIntegrationPage() {
         highlights={highlights}
       />
 
-      <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-h3">Connect your CRM</CardTitle>
-              <Badge
-                variant="secondary"
-                className="shrink-0 bg-muted text-muted-foreground"
-              >
-                Bring your own account
-              </Badge>
-            </div>
-            <CardDescription className="text-body">
-              Automatically push every call to your CRM — upsert the contact and
-              log the outcome, recording, transcript and sentiment. Connect your
-              own CRM account and API token.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <CrmSection />
-          </CardContent>
-        </Card>
+      <SectionCard
+        description="Automatically push every call to your CRM — upsert the contact and log the outcome, recording, transcript and sentiment. Connect your own CRM account and API token."
+        actions={
+          <Badge
+            variant="secondary"
+            className="shrink-0 bg-muted text-muted-foreground"
+          >
+            Bring your own account
+          </Badge>
+        }
+      >
+        <CrmSection />
+      </SectionCard>
     </PageShell>
   );
 }

@@ -28,6 +28,7 @@ import {
   formatMoneyBalance,
   planLabel,
 } from "@/components/admin/adminFormat";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PageShell } from "@/components/layout/PageShell";
 import { Badge } from "@/components/ui/badge";
@@ -409,29 +410,17 @@ export default function ClientsPage() {
             </div>
           </div>
         ) : clients.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/60 bg-card px-6 py-16 text-center shadow-[var(--shadow-card)]">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-              <Users className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <p className="text-label text-foreground">
-              No client organizations yet
-            </p>
-            <p className="text-body max-w-sm text-muted-foreground">
-              New signups appear here automatically, or use{" "}
-              <span className="font-medium text-foreground">New client</span>{" "}
-              to create one.
-            </p>
-          </div>
+          <EmptyState
+            icon={Users}
+            title="No client organizations yet"
+            description="New signups appear here automatically, or use New client to create one."
+          />
         ) : filteredClients.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/60 bg-card px-6 py-16 text-center shadow-[var(--shadow-card)]">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-              <Search className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <p className="text-label text-foreground">No matching clients</p>
-            <p className="text-body max-w-sm text-muted-foreground">
-              No clients match the current search and filters.
-            </p>
-          </div>
+          <EmptyState
+            icon={Search}
+            title="No matching clients"
+            description="No clients match the current search and filters."
+          />
         ) : (
           <div className="overflow-x-auto rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)]">
             <Table>

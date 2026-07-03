@@ -4,16 +4,10 @@ import { ExternalLink } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PageShell } from "@/components/layout/PageShell";
+import { SectionCard } from "@/components/layout/SectionCard";
 import { MCPSection } from "@/components/MCPSection";
 import { OrganizationPreferencesSection } from "@/components/OrganizationPreferencesSection";
 import { TelemetrySection } from "@/components/TelemetrySection";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { INTEGRATION_DOCUMENTATION_URLS } from "@/constants/documentation";
 import { useFeature } from "@/hooks/useFeature";
 import { BRAND } from "@/lib/brand";
@@ -31,24 +25,18 @@ export default function SettingsPage() {
         subtitle="Platform configuration. Manage Billing, Phone Numbers, WhatsApp and CRM from the Integrations section in the sidebar."
       />
 
-        <Card className="rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
-          <CardHeader className="gap-1.5">
-            <CardTitle className="text-h3">Preferences</CardTitle>
-            <CardDescription className="text-body">
-              Set organization-wide defaults such as the test phone number and
-              timezone.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <OrganizationPreferencesSection />
-          </CardContent>
-        </Card>
+        <SectionCard
+          title="Preferences"
+          description="Set organization-wide defaults such as the test phone number and timezone."
+        >
+          <OrganizationPreferencesSection />
+        </SectionCard>
 
         {mcp.enabled && (
-          <Card className="rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
-            <CardHeader className="gap-1.5">
-              <CardTitle className="text-h3">MCP Server</CardTitle>
-              <CardDescription className="text-body">
+          <SectionCard
+            title="MCP Server"
+            description={
+              <>
                 Let AI agents access your {BRAND.name} workspace and documentation
                 via the Model Context Protocol.{" "}
                 <a
@@ -59,18 +47,17 @@ export default function SettingsPage() {
                 >
                   Learn more <ExternalLink className="h-3 w-3" />
                 </a>
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <MCPSection />
-            </CardContent>
-          </Card>
+              </>
+            }
+          >
+            <MCPSection />
+          </SectionCard>
         )}
 
-        <Card className="rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
-          <CardHeader className="gap-1.5">
-            <CardTitle className="text-h3">Telemetry</CardTitle>
-            <CardDescription className="text-body">
+        <SectionCard
+          title="Telemetry"
+          description={
+            <>
               Configure Langfuse tracing for your voice agent calls.{" "}
               <a
                 href={INTEGRATION_DOCUMENTATION_URLS.tracing}
@@ -80,12 +67,11 @@ export default function SettingsPage() {
               >
                 Learn more <ExternalLink className="h-3 w-3" />
               </a>
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <TelemetrySection />
-          </CardContent>
-        </Card>
+            </>
+          }
+        >
+          <TelemetrySection />
+        </SectionCard>
     </PageShell>
   );
 }

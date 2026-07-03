@@ -6,6 +6,7 @@ import {
   Copy,
   ExternalLink,
   Pencil,
+  Phone,
   Plus,
   Star,
   Trash2,
@@ -24,6 +25,7 @@ import type {
   TelephonyConfigurationDetail,
   TelephonyConfigurationListItem,
 } from "@/client/types.gen";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PageShell } from "@/components/layout/PageShell";
 import { ConfigFormDialog } from "@/components/telephony/ConfigFormDialog";
@@ -39,13 +41,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { INTEGRATION_DOCUMENTATION_URLS } from "@/constants/documentation";
 import { useTelephonyConfigWarnings } from "@/context/TelephonyConfigWarningsContext";
@@ -206,19 +202,16 @@ export default function TelephonyConfigurationsPage() {
             <Skeleton className="h-24 w-full rounded-2xl" />
           </div>
         ) : items.length === 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>No telephony configurations yet</CardTitle>
-              <CardDescription>
-                Add one to enable outbound calls and receive inbound calls.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+          <EmptyState
+            icon={Phone}
+            title="No telephony configurations yet"
+            description="Add one to enable outbound calls and receive inbound calls."
+            action={
               <Button onClick={() => setCreateOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" /> Add configuration
               </Button>
-            </CardContent>
-          </Card>
+            }
+          />
         ) : (
           <div className="grid gap-3">
             {items.map((item) => (

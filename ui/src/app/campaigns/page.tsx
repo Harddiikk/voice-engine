@@ -1,11 +1,12 @@
 "use client";
 
-import { Plus } from 'lucide-react';
+import { Megaphone, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
 import { getCampaignsApiV1CampaignGet } from '@/client/sdk.gen';
 import type { CampaignsResponse } from '@/client/types.gen';
+import { EmptyState } from '@/components/layout/EmptyState';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PageShell } from '@/components/layout/PageShell';
 import { Badge } from '@/components/ui/badge';
@@ -183,17 +184,18 @@ export default function CampaignsPage() {
                             </Table>
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
-                            <div className="space-y-1">
-                                <p className="text-body font-medium text-foreground">No campaigns yet</p>
-                                <p className="text-small text-muted-foreground">
-                                    Launch your first campaign to start reaching contacts.
-                                </p>
-                            </div>
-                            <Button onClick={handleCreateCampaign} variant="outline">
-                                <Plus className="mr-2 h-4 w-4" />
-                                Create your first campaign
-                            </Button>
+                        <div className="px-6 pb-6">
+                            <EmptyState
+                                icon={Megaphone}
+                                title="No campaigns yet"
+                                description="Launch your first campaign to start reaching contacts."
+                                action={
+                                    <Button onClick={handleCreateCampaign} variant="outline">
+                                        <Plus className="mr-2 h-4 w-4" />
+                                        Create your first campaign
+                                    </Button>
+                                }
+                            />
                         </div>
                     )}
                 </CardContent>

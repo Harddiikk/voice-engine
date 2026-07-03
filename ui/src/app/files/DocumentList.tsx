@@ -9,6 +9,7 @@ import {
   listDocumentsApiV1KnowledgeBaseDocumentsGet,
 } from '@/client/sdk.gen';
 import type { DocumentResponseSchema } from '@/client/types.gen';
+import { EmptyState } from '@/components/layout/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -181,14 +182,14 @@ export default function DocumentList({ refreshTrigger }: DocumentListProps) {
 
       {/* Document List */}
       {filteredDocuments.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/20 py-14 text-center">
-          <FileText className="w-12 h-12 text-muted-foreground mb-4" />
-          <p className="text-muted-foreground">
-            {searchQuery
+        <EmptyState
+          icon={FileText}
+          title={
+            searchQuery
               ? 'No documents match your search'
-              : 'No documents uploaded yet'}
-          </p>
-        </div>
+              : 'No documents uploaded yet'
+          }
+        />
       ) : (
         <div className="space-y-3">
           {filteredDocuments.map((doc) => (

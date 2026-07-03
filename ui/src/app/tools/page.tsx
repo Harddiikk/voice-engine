@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
+import { ExternalLink, Plus, RotateCcw, Search, Trash2, Wrench } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,6 +12,7 @@ import {
 } from "@/client/sdk.gen";
 import type { CreateToolRequest, ToolResponse } from "@/client/types.gen";
 import { CredentialSelector } from "@/components/http";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PageShell } from "@/components/layout/PageShell";
 import { Badge } from "@/components/ui/badge";
@@ -360,19 +361,17 @@ export default function ToolsPage() {
                                     ))}
                                 </div>
                             ) : activeTools.length === 0 && archivedTools.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/20 py-14 text-center">
-                                    {renderToolIcon("http_api", "w-12 h-12 text-muted-foreground mb-4")}
-                                    <p className="text-muted-foreground mb-4">
-                                        {searchQuery
-                                            ? "No tools match your search"
-                                            : "No tools found"}
-                                    </p>
-                                    {!searchQuery && (
-                                        <Button onClick={() => setIsCreateDialogOpen(true)}>
-                                            Create Your First Tool
-                                        </Button>
-                                    )}
-                                </div>
+                                <EmptyState
+                                    icon={Wrench}
+                                    title={searchQuery ? "No tools match your search" : "No tools found"}
+                                    action={
+                                        !searchQuery ? (
+                                            <Button onClick={() => setIsCreateDialogOpen(true)}>
+                                                Create Your First Tool
+                                            </Button>
+                                        ) : undefined
+                                    }
+                                />
                             ) : (
                                 <>
                                     {/* Active Tools */}
@@ -424,14 +423,15 @@ export default function ToolsPage() {
                                             ))}
                                         </div>
                                     ) : !searchQuery ? (
-                                        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/20 py-12 text-center">
-                                            <p className="text-muted-foreground mb-4">
-                                                No active tools
-                                            </p>
-                                            <Button onClick={() => setIsCreateDialogOpen(true)}>
-                                                Create Your First Tool
-                                            </Button>
-                                        </div>
+                                        <EmptyState
+                                            icon={Wrench}
+                                            title="No active tools"
+                                            action={
+                                                <Button onClick={() => setIsCreateDialogOpen(true)}>
+                                                    Create Your First Tool
+                                                </Button>
+                                            }
+                                        />
                                     ) : null}
 
                                     {/* Archived Tools */}

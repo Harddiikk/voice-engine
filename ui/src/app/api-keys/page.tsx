@@ -13,6 +13,7 @@ import {
     reactivateApiKeyApiV1UserApiKeysApiKeyIdReactivatePut
 } from '@/client/sdk.gen';
 import type { ApiKeyResponse, CreateApiKeyResponse, CreateServiceKeyResponse,ServiceKeyResponse } from '@/client/types.gen';
+import { EmptyState } from '@/components/layout/EmptyState';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PageShell } from '@/components/layout/PageShell';
 import { Badge } from '@/components/ui/badge';
@@ -379,15 +380,15 @@ export default function APIKeysPage() {
                                     ))}
                                 </div>
                             ) : apiKeys.length === 0 ? (
-                                <div className="flex flex-col items-center gap-3 py-12 text-center">
-                                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                                        <Key className="w-6 h-6 text-muted-foreground" />
-                                    </div>
-                                    <p className="text-label text-foreground">No API keys found</p>
-                                    <Button onClick={() => setIsCreateDialogOpen(true)}>
-                                        Create Your First API Key
-                                    </Button>
-                                </div>
+                                <EmptyState
+                                    icon={Key}
+                                    title="No API keys found"
+                                    action={
+                                        <Button onClick={() => setIsCreateDialogOpen(true)}>
+                                            Create Your First API Key
+                                        </Button>
+                                    }
+                                />
                             ) : (
                                 <div className="space-y-3">
                                     {apiKeys.map((key) => (
@@ -498,17 +499,17 @@ export default function APIKeysPage() {
                                     ))}
                                 </div>
                             ) : serviceKeys.length === 0 ? (
-                                <div className="flex flex-col items-center gap-3 py-12 text-center">
-                                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                                        <Key className="w-6 h-6 text-muted-foreground" />
-                                    </div>
-                                    <p className="text-label text-foreground">No service keys found</p>
-                                    {canCreateServiceKey && (
-                                        <Button onClick={() => setIsCreateServiceDialogOpen(true)}>
-                                            Create Your First Service Key
-                                        </Button>
-                                    )}
-                                </div>
+                                <EmptyState
+                                    icon={Key}
+                                    title="No service keys found"
+                                    action={
+                                        canCreateServiceKey ? (
+                                            <Button onClick={() => setIsCreateServiceDialogOpen(true)}>
+                                                Create Your First Service Key
+                                            </Button>
+                                        ) : undefined
+                                    }
+                                />
                             ) : (
                                 <div className="space-y-3">
                                     {serviceKeys.map((key) => (

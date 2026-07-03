@@ -1,7 +1,9 @@
+import { Bot } from 'lucide-react';
 import { Suspense } from 'react';
 
 import { getWorkflowsApiV1WorkflowFetchGet, listFoldersApiV1FolderGet } from '@/client/sdk.gen';
 import type { FolderResponse, WorkflowListResponse } from '@/client/types.gen';
+import { EmptyState } from '@/components/layout/EmptyState';
 import { Card, CardContent } from '@/components/ui/card';
 import { CreateWorkflowButton } from "@/components/workflow/CreateWorkflowButton";
 import { AgentFolderView } from '@/components/workflow/folders/AgentFolderView';
@@ -81,14 +83,11 @@ async function WorkflowList() {
                     {activeWorkflows.length > 0 || folders.length > 0 ? (
                         <AgentFolderView workflows={activeWorkflows} folders={folders} />
                     ) : (
-                        <Card className="rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
-                            <CardContent className="flex flex-col items-center justify-center gap-1 p-12 text-center">
-                                <p className="text-body font-medium text-foreground">No active agents yet</p>
-                                <p className="text-small text-muted-foreground">
-                                    Create your first agent to get started.
-                                </p>
-                            </CardContent>
-                        </Card>
+                        <EmptyState
+                            icon={Bot}
+                            title="No active agents yet"
+                            description="Create your first agent to get started."
+                        />
                     )}
                 </div>
 

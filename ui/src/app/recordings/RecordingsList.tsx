@@ -10,6 +10,7 @@ import {
     updateRecordingApiV1WorkflowRecordingsIdPatch,
 } from "@/client/sdk.gen";
 import type { RecordingResponseSchema } from "@/client/types.gen";
+import { EmptyState } from "@/components/layout/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -204,14 +205,10 @@ export default function RecordingsList({ refreshKey }: { refreshKey?: number }) 
 
             {/* Recordings List */}
             {filteredRecordings.length === 0 ? (
-                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/20 py-14 text-center">
-                    <AudioLines className="w-12 h-12 text-muted-foreground mb-4" />
-                    <p className="text-muted-foreground">
-                        {searchQuery
-                            ? "No recordings match your search"
-                            : "No recordings yet"}
-                    </p>
-                </div>
+                <EmptyState
+                    icon={AudioLines}
+                    title={searchQuery ? "No recordings match your search" : "No recordings yet"}
+                />
             ) : (
                 <div className="space-y-3">
                     {filteredRecordings.map((rec) => {

@@ -2,15 +2,9 @@ import { PhoneCall, ShieldCheck, Wallet } from "lucide-react";
 
 import { IntegrationHero } from "@/components/integrations/IntegrationHero";
 import { PageShell } from "@/components/layout/PageShell";
+import { SectionCard } from "@/components/layout/SectionCard";
 import { PhoneNumbersSection } from "@/components/PhoneNumbersSection";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 
 const highlights = [
   {
@@ -41,26 +35,19 @@ export default function PhoneNumbersPage() {
         highlights={highlights}
       />
 
-      <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-h3">Phone Numbers</CardTitle>
-              <Badge
-                variant="secondary"
-                className="shrink-0 bg-muted text-muted-foreground"
-              >
-                KYC required
-              </Badge>
-            </div>
-            <CardDescription className="text-body">
-              Buy a phone number for outbound calls. Requires completed KYC;
-              charged to your call-credit balance.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <PhoneNumbersSection />
-          </CardContent>
-        </Card>
+      <SectionCard
+        description="Buy a phone number for outbound calls. Requires completed KYC; charged to your call-credit balance."
+        actions={
+          <Badge
+            variant="secondary"
+            className="shrink-0 bg-muted text-muted-foreground"
+          >
+            KYC required
+          </Badge>
+        }
+      >
+        <PhoneNumbersSection />
+      </SectionCard>
     </PageShell>
   );
 }
