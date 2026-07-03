@@ -1,3 +1,4 @@
+from api.db.admin_audit_client import AdminAuditClient
 from api.db.agent_trigger_client import AgentTriggerClient
 from api.db.api_key_client import APIKeyClient
 from api.db.campaign_client import CampaignClient
@@ -47,6 +48,7 @@ class DBClient(
     TelephonyConfigurationClient,
     TelephonyPhoneNumberClient,
     FolderClient,
+    AdminAuditClient,
 ):
     """
     Unified database client that combines all specialized database operations.

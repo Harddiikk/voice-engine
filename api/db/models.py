@@ -1440,6 +1440,33 @@ class CreditLedgerModel(Base):
     )
 
 
+class AdminAuditModel(Base):
+    """Append-only log of superuser admin actions on client orgs (who did what
+    to whom, when) — plan changes, pricing edits, grants, suspends, notes, etc."""
+
+    __tablename__ = "admin_audit"
+
+    id = Column(Integer, primary_key=True, index=True)
+    actor_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    target_organization_id = Column(
+        Integer,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    action = Column(String(64), nullable=False)
+    detail = Column(JSON, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_admin_audit_org_created", "target_organization_id", "created_at"),
+    )
+
+
 class PaymentTransactionModel(Base):
     """A Razorpay top-up: one row per order, credited to the org on payment verify."""
 
