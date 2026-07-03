@@ -229,6 +229,65 @@ async def get_organization_overview(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class NumberDisposition(BaseModel):
+    disposition: str
+    count: int
+
+
+class NumberAnalyticsRow(BaseModel):
+    number: str
+    label: str
+    calls: int
+    connected: int
+    success_rate: float
+    avg_duration_seconds: float
+    total_minutes: float
+    top_dispositions: List[NumberDisposition]
+
+
+class ByNumberAnalyticsResponse(BaseModel):
+    numbers: List[NumberAnalyticsRow]
+
+
+@router.get("/analytics/by-number", response_model=ByNumberAnalyticsResponse)
+async def get_analytics_by_number(
+    start_date: Optional[str] = Query(
+        None,
+        description="ISO 8601 date-time string (UTC). Lower bound (inclusive) on `created_at`.",
+        examples=["2026-06-01T00:00:00Z"],
+    ),
+    end_date: Optional[str] = Query(
+        None,
+        description="ISO 8601 date-time string (UTC). Upper bound (inclusive) on `created_at`.",
+    ),
+    call_type: Optional[Literal["inbound", "outbound"]] = Query(
+        None,
+        description="Restrict to a single call direction. Omit for both.",
+    ),
+    user: UserModel = Depends(get_user_with_selected_organization),
+):
+    """Per-DID ("port") analytics for the selected organization.
+
+    Returns one row per originating/receiving DID used by the org, with calls,
+    connected, success_rate, avg_duration_seconds, total_minutes and top
+    dispositions. Org-scoped and using the same disposition→outcome mapping as
+    `/overview`. Not price-gated.
+    """
+    start_dt = datetime.fromisoformat(start_date) if start_date else None
+    end_dt = datetime.fromisoformat(end_date) if end_date else None
+    try:
+        numbers = await db_client.get_organization_analytics_by_number(
+            user.selected_organization_id,
+            start_date=start_dt,
+            end_date=end_dt,
+            call_type=call_type,
+        )
+        return {"numbers": numbers}
+    except Exception as e:
+        logger.error(f"Failed to build by-number analytics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/usage/current-period", response_model=CurrentUsageResponse)
 async def get_current_period_usage(user: UserModel = Depends(get_user)):
     """Get current reporting-period usage for the user's organization."""

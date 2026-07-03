@@ -1,6 +1,6 @@
 'use client';
 
-import { Bot, Clock, CreditCard, Megaphone, PhoneCall, ShieldCheck } from 'lucide-react';
+import { Bot, Clock, CreditCard, Megaphone, PhoneCall } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 
@@ -12,7 +12,6 @@ type Campaign = { state?: string | null };
 type DailyItem = { date: string; minutes?: number; call_count?: number };
 type Breakdown = { breakdown?: DailyItem[]; total_minutes?: number };
 type Balance = { balance_seconds: number | null; unlimited: boolean; plan?: string };
-type Kyc = { is_complete?: boolean; kyc_status?: string | null };
 type Run = {
   workflow_name: string | null;
   created_at: string;
@@ -31,8 +30,6 @@ type Metrics = {
   balanceSeconds: number | null;
   unlimited: boolean;
   plan: string;
-  kycComplete: boolean;
-  kycStatus: string;
   recent: Run[];
 };
 
@@ -82,12 +79,11 @@ export function HomeMetrics() {
     fetched.current = true;
 
     (async () => {
-      const [counts, campaigns, breakdown, balance, kyc, runs] = await Promise.all([
+      const [counts, campaigns, breakdown, balance, runs] = await Promise.all([
         get<Counts>('/api/v1/workflow/count'),
         get<{ campaigns?: Campaign[] }>('/api/v1/campaign/'),
         get<Breakdown>('/api/v1/organizations/usage/daily-breakdown'),
         get<Balance>('/api/v1/billing/balance'),
-        get<Kyc>('/api/v1/kyc/status'),
         get<{ runs?: Run[] }>('/api/v1/organizations/usage/runs?page=1&limit=5'),
       ]);
 
@@ -105,8 +101,6 @@ export function HomeMetrics() {
         balanceSeconds: balance ? balance.balance_seconds : null,
         unlimited: balance?.unlimited ?? false,
         plan: balance?.plan ?? 'trial',
-        kycComplete: !!kyc?.is_complete,
-        kycStatus: kyc?.kyc_status ?? 'pending',
         recent: runs?.runs ?? [],
       });
     })();
@@ -151,13 +145,6 @@ export function HomeMetrics() {
         : '—',
       sub: m ? `${planLabel(m.plan)} plan` : ' ',
       href: '/credits',
-    },
-    {
-      icon: ShieldCheck,
-      label: 'KYC',
-      value: m ? (m.kycComplete ? 'Verified' : 'Pending') : '—',
-      sub: m && !m.kycComplete ? 'Finish setup →' : 'Identity verified',
-      href: '/kyc',
     },
   ];
 

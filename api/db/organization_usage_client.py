@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -13,12 +14,14 @@ from api.db.models import (
     OrganizationConfigurationModel,
     OrganizationModel,
     OrganizationUsageCycleModel,
+    TelephonyPhoneNumberModel,
     UserConfigurationModel,
     UserModel,
     WorkflowModel,
     WorkflowRunModel,
 )
 from api.enums import (
+    CallType,
     OrganizationConfigurationKey,
     UserConfigurationKey,
     WorkflowStatus,
@@ -754,6 +757,164 @@ class OrganizationUsageClient(BaseDBClient):
                 "by_disposition": by_disposition,
             },
         }
+
+    async def get_organization_analytics_by_number(
+        self,
+        organization_id: int,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        call_type: Optional[str] = None,
+    ) -> list[dict]:
+        """Per-DID ("port") performance for an organization.
+
+        Groups every run by the *effective DID* it used — for outbound runs the
+        FROM number (``initial_context->>'caller_number'``), for inbound the DID
+        that received the call (``initial_context->>'called_number'``) — and
+        returns calls / connected / success_rate / avg_duration_seconds /
+        total_minutes / top dispositions per number. Org-scoped through the same
+        workflow → user → ``selected_organization_id`` join as
+        ``get_organization_overview`` (and the disposition→outcome mapping is the
+        shared ``classify_disposition`` / ``compute_success_rate``) so the
+        numbers reconcile with the overview tab.
+
+        The DID is normalized to bare digits (``regexp_replace``) so an outbound
+        ``caller_number`` (stored bare) matches the ``telephony_phone_numbers``
+        label whose ``address_normalized`` may carry +country formatting.
+        ``call_type`` optionally restricts to a single direction.
+        """
+        async with self.async_session() as session:
+            initial_jsonb = cast(WorkflowRunModel.initial_context, JSONB)
+            caller_number = initial_jsonb.op("->>")("caller_number")
+            called_number = initial_jsonb.op("->>")("called_number")
+            # Effective DID: inbound → the number that received the call;
+            # outbound → the FROM number we dialed out on.
+            effective_did = case(
+                (
+                    WorkflowRunModel.call_type == CallType.INBOUND.value,
+                    called_number,
+                ),
+                else_=caller_number,
+            )
+            # Bare digits so the (bare) outbound caller_number and the
+            # (possibly +country) phone-number label collapse to one key.
+            bare_did = func.regexp_replace(
+                func.coalesce(effective_did, ""), r"[^0-9]", "", "g"
+            )
+            disposition_expr = cast(
+                WorkflowRunModel.gathered_context, JSONB
+            ).op("->>")("mapped_call_disposition")
+            completed = WorkflowRunModel.is_completed.is_(True)
+            duration = WorkflowRunModel.usage_info["call_duration_seconds"].as_float()
+
+            # Group by (DID, disposition) in one round-trip; re-aggregate to the
+            # per-number level in Python so the disposition buckets and the
+            # top-disposition list come from the same scan.
+            query = (
+                select(
+                    bare_did.label("number"),
+                    disposition_expr.label("disposition"),
+                    func.count(WorkflowRunModel.id).label("calls"),
+                    func.coalesce(
+                        func.sum(case((completed, duration), else_=0.0)), 0.0
+                    ).label("seconds"),
+                    func.coalesce(
+                        func.sum(
+                            case((and_(completed, duration > 0), 1), else_=0)
+                        ),
+                        0,
+                    ).label("connected"),
+                )
+                .join(WorkflowModel, WorkflowModel.id == WorkflowRunModel.workflow_id)
+                .join(UserModel, UserModel.id == WorkflowModel.user_id)
+                .where(UserModel.selected_organization_id == organization_id)
+                .group_by(bare_did, disposition_expr)
+            )
+            if start_date:
+                query = query.where(WorkflowRunModel.created_at >= start_date)
+            if end_date:
+                query = query.where(WorkflowRunModel.created_at <= end_date)
+            if call_type in {ct.value for ct in CallType}:
+                query = query.where(WorkflowRunModel.call_type == call_type)
+
+            grouped = await session.execute(query)
+            rows = grouped.all()
+
+            # Human labels: bare-digit-normalize the org's configured numbers so
+            # a +1-formatted address_normalized matches the bare grouped DID.
+            phone_result = await session.execute(
+                select(
+                    TelephonyPhoneNumberModel.address_normalized,
+                    TelephonyPhoneNumberModel.address,
+                    TelephonyPhoneNumberModel.label,
+                ).where(
+                    TelephonyPhoneNumberModel.organization_id == organization_id
+                )
+            )
+            label_by_bare: dict[str, str] = {}
+            for pn in phone_result.all():
+                bare = re.sub(r"\D", "", pn.address_normalized or "")
+                if not bare:
+                    continue
+                label_by_bare[bare] = pn.label or pn.address or pn.address_normalized
+
+        by_number: dict[str, dict] = {}
+        for row in rows:
+            number = row.number
+            if not number:
+                # Runs with no captured DID — nothing to attribute to a port.
+                continue
+            entry = by_number.setdefault(
+                number,
+                {
+                    "calls": 0,
+                    "connected": 0,
+                    "seconds": 0.0,
+                    "success": 0,
+                    "failed": 0,
+                    "dispositions": {},
+                },
+            )
+            calls = int(row.calls or 0)
+            entry["calls"] += calls
+            entry["connected"] += int(row.connected or 0)
+            entry["seconds"] += float(row.seconds or 0.0)
+            bucket = classify_disposition(row.disposition)
+            if bucket == "success":
+                entry["success"] += calls
+            elif bucket == "failed":
+                entry["failed"] += calls
+            if row.disposition:
+                entry["dispositions"][row.disposition] = (
+                    entry["dispositions"].get(row.disposition, 0) + calls
+                )
+
+        numbers: list[dict] = []
+        for number, e in by_number.items():
+            connected = e["connected"]
+            seconds = e["seconds"]
+            top = sorted(
+                e["dispositions"].items(), key=lambda kv: kv[1], reverse=True
+            )[:3]
+            numbers.append(
+                {
+                    "number": number,
+                    "label": label_by_bare.get(number) or number,
+                    "calls": e["calls"],
+                    "connected": connected,
+                    "success_rate": compute_success_rate(e["success"], e["failed"]),
+                    # Average duration of connected calls (completed w/ duration).
+                    "avg_duration_seconds": (
+                        round(seconds / connected, 1) if connected else 0.0
+                    ),
+                    "total_minutes": round(seconds / 60, 1),
+                    "top_dispositions": [
+                        {"disposition": d, "count": c} for d, c in top
+                    ],
+                }
+            )
+
+        numbers.sort(key=lambda n: n["calls"], reverse=True)
+        return numbers
 
     def _calculate_current_period(self) -> tuple[datetime, datetime]:
         """Calculate the current calendar-month reporting period."""

@@ -26,23 +26,23 @@ const highlights = [
 
 export default function PhoneNumbersPage() {
   return (
-    <PageShell width="narrow">
+    <PageShell width="wide">
       <IntegrationHero
         icon={PhoneCall}
         eyebrow="Telephony"
         title="Phone Numbers"
-        subtitle="Buy and manage outbound numbers for your campaigns."
+        subtitle="Buy and manage outbound numbers for your campaigns — verification is built in at the point of purchase."
         highlights={highlights}
       />
 
       <SectionCard
-        description="Buy a phone number for outbound calls. Requires completed KYC; charged to your call-credit balance."
+        description="Buy and manage outbound numbers. Business verification (KYC) unlocks purchases and is completed right here."
         actions={
           <Badge
             variant="secondary"
             className="shrink-0 bg-muted text-muted-foreground"
           >
-            KYC required
+            KYC built in
           </Badge>
         }
       >

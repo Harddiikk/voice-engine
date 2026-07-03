@@ -296,7 +296,7 @@ export default function AgentBuilderPage() {
 
     return (
         <div className="min-h-screen bg-background">
-            <div className="container mx-auto max-w-3xl px-4 py-12">
+            <div className="container mx-auto max-w-5xl px-4 py-12">
                 {/* Header */}
                 <div className="mb-8">
                     <p className="text-eyebrow text-primary">{BRAND.name}</p>

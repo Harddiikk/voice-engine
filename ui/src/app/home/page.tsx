@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, BarChart3, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 
 import { OverviewDashboard } from '@/components/dashboard/OverviewDashboard';
@@ -18,10 +18,20 @@ export default function HomePage() {
                 eyebrow="Dashboard"
                 title="Welcome back"
                 subtitle="Here's how your voice agents are performing."
+                actions={
+                    <Link
+                        href="/analytics"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-card px-3 py-2 text-small font-medium text-foreground shadow-[var(--shadow-card)] transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[var(--shadow-pop)] focus-visible:ring-1 focus-visible:ring-ring outline-none"
+                    >
+                        <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                        View full analytics
+                        <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    </Link>
+                }
             />
 
-            {/* Dashboard — at-a-glance metrics */}
-            <OverviewDashboard showHeader={false} />
+            {/* At-a-glance dashboard — compact tiles + one sparkline + outcomes donut */}
+            <OverviewDashboard compact showHeader={false} />
 
             {/* Build with AI — prompt-to-agent entry (Growth & higher only) */}
             {canBuildWithAI && (

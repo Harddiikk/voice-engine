@@ -225,7 +225,16 @@ const OUTCOME_COLORS = {
     other: 'var(--muted-foreground)',
 } as const;
 
-function CallOutcomes({ outcomes, successRate }: { outcomes: OverviewResponse['outcomes']; successRate: number }) {
+function CallOutcomes({
+    outcomes,
+    successRate,
+    compact = false,
+}: {
+    outcomes: OverviewResponse['outcomes'];
+    successRate: number;
+    /** Hide the disposition breakdown for the at-a-glance (Home) dashboard. */
+    compact?: boolean;
+}) {
     const total = outcomes.success + outcomes.failed + outcomes.other;
     const slices = [
         { key: 'success', label: 'Success', count: outcomes.success, color: OUTCOME_COLORS.success },
@@ -295,7 +304,7 @@ function CallOutcomes({ outcomes, successRate }: { outcomes: OverviewResponse['o
                                 ))}
                             </ul>
 
-                            {outcomes.by_disposition.length > 0 && (
+                            {!compact && outcomes.by_disposition.length > 0 && (
                                 <div className="border-t border-border/50 pt-3">
                                     <p className="mb-1.5 text-eyebrow text-muted-foreground">Top dispositions</p>
                                     <ul className="space-y-1">
@@ -321,11 +330,81 @@ function CallOutcomes({ outcomes, successRate }: { outcomes: OverviewResponse['o
     );
 }
 
-export function OverviewDashboard({ showHeader = true }: { showHeader?: boolean }) {
+/**
+ * A single small area chart of call volume, used only on the compact (Home)
+ * dashboard in place of the full dual Usage-Trends panel. Reuses the same
+ * `trends` slice of the /overview payload — no extra fetch.
+ */
+function CompactCallsTrend({ data, period }: { data: OverviewResponse['trends']; period: Period }) {
+    const hasData = data.length > 0;
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Calls</CardTitle>
+                <CardDescription>Call volume over {PERIOD_NOUN[period]}</CardDescription>
+            </CardHeader>
+            <CardContent>
+                {hasData ? (
+                    <ResponsiveContainer width="100%" height={140}>
+                        <AreaChart data={data} margin={{ top: 6, right: 8, left: -20, bottom: 0 }}>
+                            <defs>
+                                <linearGradient id="compact-trend-calls" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.28} />
+                                    <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.12} />
+                            <XAxis
+                                dataKey="bucket"
+                                tickFormatter={(v: string) => formatBucket(v, period)}
+                                tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
+                                tickLine={false}
+                                axisLine={false}
+                                minTickGap={24}
+                            />
+                            <YAxis hide />
+                            <Tooltip
+                                content={<TrendTooltip unit="calls" period={period} />}
+                                cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+                            />
+                            <Area
+                                type="monotone"
+                                dataKey="calls"
+                                stroke="var(--chart-1)"
+                                strokeWidth={2}
+                                fill="url(#compact-trend-calls)"
+                                dot={false}
+                                activeDot={{ r: 4, strokeWidth: 0 }}
+                            />
+                        </AreaChart>
+                    </ResponsiveContainer>
+                ) : (
+                    <div className="flex h-[140px] flex-col items-center justify-center text-center">
+                        <BarChart3 className="mb-2 h-6 w-6 text-muted-foreground/50" aria-hidden />
+                        <p className="text-small text-muted-foreground">No calls yet</p>
+                    </div>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+/** Headline tiles shown on the compact (Home) dashboard — a subset of the full set. */
+const COMPACT_TILE_LABELS = new Set(['Total Calls', 'Success Rate', 'Live Calls', 'Credits']);
+
+export function OverviewDashboard({
+    showHeader = true,
+    compact = false,
+}: {
+    showHeader?: boolean;
+    /** At-a-glance mode for Home: 4 headline tiles + one sparkline + compact donut. */
+    compact?: boolean;
+}) {
     const { user, loading: authLoading } = useAuth();
     const authReady = !authLoading && !!user;
 
-    const [period, setPeriod] = useState<Period>('month');
+    // Home (compact) shows calls over the last ~30 days; Analytics defaults to month.
+    const [period, setPeriod] = useState<Period>(compact ? 'day' : 'month');
     const [data, setData] = useState<OverviewResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -431,6 +510,45 @@ export function OverviewDashboard({ showHeader = true }: { showHeader?: boolean 
                         <p className="text-small text-destructive">{error}</p>
                     </CardContent>
                 </Card>
+            ) : compact ? (
+                <>
+                    {/* Headline tiles — 4 at a glance */}
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        {tiles
+                            .filter((tile) => COMPACT_TILE_LABELS.has(tile.label))
+                            .map((tile) => (
+                                <StatTile
+                                    key={tile.label}
+                                    icon={tile.icon}
+                                    label={tile.label}
+                                    value={tile.value}
+                                    sub={tile.sub}
+                                    live={tile.live}
+                                    loading={showTileSkeleton}
+                                />
+                            ))}
+                    </div>
+
+                    {/* One calls sparkline + a compact outcomes donut */}
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                        {showTileSkeleton ? (
+                            <Skeleton className="h-[232px] w-full rounded-2xl" />
+                        ) : (
+                            <CompactCallsTrend data={data?.trends ?? []} period={period} />
+                        )}
+                        {showTileSkeleton ? (
+                            <Skeleton className="h-[232px] w-full rounded-2xl" />
+                        ) : (
+                            data && (
+                                <CallOutcomes
+                                    outcomes={data.outcomes}
+                                    successRate={data.totals.success_rate}
+                                    compact
+                                />
+                            )
+                        )}
+                    </div>
+                </>
             ) : (
                 <>
                     {/* Stat tiles */}

@@ -2,6 +2,7 @@
 
 import { Suspense } from 'react';
 
+import { ByNumberTab } from '@/components/dashboard/ByNumberTab';
 import { OverviewDashboard } from '@/components/dashboard/OverviewDashboard';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PageShell } from '@/components/layout/PageShell';
@@ -28,6 +29,12 @@ export default function AnalyticsPage() {
               Overview
             </TabsTrigger>
             <TabsTrigger
+              value="by-number"
+              className="rounded-xl px-5 text-sm font-medium text-muted-foreground transition-all duration-200 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[var(--shadow-pop)]"
+            >
+              By Number
+            </TabsTrigger>
+            <TabsTrigger
               value="runs"
               className="rounded-xl px-5 text-sm font-medium text-muted-foreground transition-all duration-200 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[var(--shadow-pop)]"
             >
@@ -37,6 +44,10 @@ export default function AnalyticsPage() {
 
           <TabsContent value="overview" className="mt-0">
             <OverviewDashboard showHeader={false} />
+          </TabsContent>
+
+          <TabsContent value="by-number" className="mt-0">
+            <ByNumberTab />
           </TabsContent>
 
           <TabsContent value="runs" className="mt-0">
