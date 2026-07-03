@@ -159,6 +159,27 @@ export async function impersonateAsSuperadmin(params: {
     if (!localData.access_token) {
       throw new Error('No access token returned from impersonate');
     }
+    // Stash the admin's OWN session before overwriting it, so the
+    // impersonation banner can restore it. localStorage survives the
+    // same-origin hard redirect to '/'. /api/auth/oss reads the httpOnly
+    // cookies server-side and returns the admin { token, user }.
+    try {
+      const adminResp = await fetch('/api/auth/oss');
+      if (adminResp.ok) {
+        const admin = await adminResp.json();
+        const clientLabel =
+          (localData.user?.email as string | undefined) ||
+          (localData.user?.name as string | undefined) ||
+          'client account';
+        localStorage.setItem(
+          'dograh_admin_session',
+          JSON.stringify({ token: admin.token, user: admin.user, clientLabel }),
+        );
+      }
+    } catch {
+      // If stashing fails the impersonation still works; the banner just
+      // won't offer a one-click return (admin can log in again).
+    }
     const sessionResp = await fetch('/api/auth/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

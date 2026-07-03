@@ -16,6 +16,7 @@ import { BRAND } from "@/lib/brand";
 import { OnboardingSurvey } from "../onboarding/OnboardingSurvey";
 import { AppSidebar } from "./AppSidebar";
 import { GitHubStarBadge } from "./GitHubStarBadge";
+import { ImpersonationBanner } from "./ImpersonationBanner";
 
 function AppHeader() {
   const { toggleSidebar } = useSidebar();
@@ -127,6 +128,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
             <AppSidebar />
             <SidebarInset className="flex-1">
               <BackendStatusBanner />
+              <ImpersonationBanner />
               {!isWorkflowEditor && <AppHeader />}
               {/* Optional header area for specific pages */}
               {headerActions && (
@@ -160,6 +162,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       ) : (
         <div className="app-surface w-full flex-1">
           <BackendStatusBanner />
+          <ImpersonationBanner />
           {children}
         </div>
       )}
