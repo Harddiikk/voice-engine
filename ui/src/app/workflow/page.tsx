@@ -122,7 +122,7 @@ async function PageContent() {
             <div className="mb-6">
                 <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
                     <div className="space-y-1">
-                        <p className="text-eyebrow text-muted-foreground">Voice Agents</p>
+                        <p className="text-eyebrow text-primary">Voice Agents</p>
                         <h1 className="text-h1 text-foreground">Your Agents</h1>
                         <p className="text-body text-muted-foreground">
                             Build, organize, and deploy your conversational AI agents.

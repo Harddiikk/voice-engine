@@ -295,7 +295,7 @@ export default function RunsPage() {
     return (
         <div className="container mx-auto p-6 space-y-6 max-w-full">
             <div>
-                <h1 className="text-3xl font-bold mb-2">Workflow Runs</h1>
+                <h1 className="text-h1 mb-2">Workflow Runs</h1>
                 <p className="text-muted-foreground">View and manage all workflow runs across organizations</p>
             </div>
 

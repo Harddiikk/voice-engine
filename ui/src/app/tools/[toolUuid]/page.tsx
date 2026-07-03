@@ -587,7 +587,7 @@ const data = await response.json();`;
                                     {renderToolIcon(tool.category)}
                                 </div>
                                 <div>
-                                    <h1 className="text-xl font-bold">{name}</h1>
+                                    <h1 className="text-h1">{name}</h1>
                                     <p className="text-sm text-muted-foreground">
                                         {getToolTypeLabel(tool.category)}
                                     </p>

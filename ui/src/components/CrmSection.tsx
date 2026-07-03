@@ -8,14 +8,8 @@ import { client } from "@/client/client.gen";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 
@@ -128,7 +122,19 @@ export function CrmSection() {
     }
   }
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-4 w-2/3" />
+        <Skeleton className="h-16 w-full rounded-md" />
+        <div className="grid grid-cols-2 gap-4">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
+        </div>
+        <Skeleton className="h-10 w-full rounded-lg" />
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSave} className="space-y-5">
@@ -157,14 +163,12 @@ export function CrmSection() {
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="crm-provider">CRM</Label>
-          <Select value={cfg.provider} onValueChange={(v) => set("provider", v)}>
-            <SelectTrigger id="crm-provider">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="gohighlevel">GoHighLevel</SelectItem>
-            </SelectContent>
-          </Select>
+          <div
+            id="crm-provider"
+            className="border-input flex h-10 w-full items-center rounded-lg border bg-muted/40 px-3.5 text-sm text-muted-foreground shadow-[var(--shadow-card)]"
+          >
+            GoHighLevel
+          </div>
         </div>
         <div className="space-y-2">
           <Label htmlFor="crm-location">Location ID</Label>

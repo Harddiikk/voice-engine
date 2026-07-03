@@ -1,0 +1,72 @@
+# Self-hosted WhatsApp HTTP API (Evolution API v2) for the Auto4You VPS.
+#
+# Isolated stack: it runs its OWN postgres + redis and NEVER touches the
+# voice-engine database. It is exposed ONLY through the existing Caddy at
+# https://wa.auto4you.in — no host ports are published. `evolution-api` joins
+# the existing external `voiceengine_app-network` so Caddy reaches it by name;
+# its postgres/redis stay on a private internal network.
+#
+# Deploy: see README.md in this folder.
+name: evolution
+
+networks:
+  edge:
+    external: true
+    name: voiceengine_app-network   # the network Caddy (voiceengine-caddy-1) is on
+  internal:
+    driver: bridge
+
+services:
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: evolution-api
+    restart: always
+    networks: [edge, internal]
+    environment:
+      SERVER_URL: ${SERVER_URL:-https://wa.auto4you.in}
+      AUTHENTICATION_API_KEY: ${AUTHENTICATION_API_KEY:?set AUTHENTICATION_API_KEY in .env}
+      # --- Postgres (own, isolated) ---
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:-evolution}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@evolution-postgres:5432/${POSTGRES_DB:-evolution}?schema=public
+      DATABASE_CONNECTION_CLIENT_NAME: evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      # --- Redis cache (own, isolated) ---
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://evolution-redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_REDIS_SAVE_INSTANCES: "false"
+      CACHE_LOCAL_ENABLED: "false"
+    depends_on: [evolution-postgres, evolution-redis]
+    volumes:
+      - evolution_instances:/evolution/instances
+
+  evolution-postgres:
+    image: postgres:15-alpine
+    container_name: evolution-postgres
+    restart: always
+    networks: [internal]            # private — not reachable from the app stack
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-evolution}
+      POSTGRES_USER: ${POSTGRES_USER:-evolution}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - evolution_postgres:/var/lib/postgresql/data
+
+  evolution-redis:
+    image: redis:7-alpine
+    container_name: evolution-redis
+    restart: always
+    networks: [internal]
+    command: redis-server --appendonly yes
+    volumes:
+      - evolution_redis:/data
+
+volumes:
+  evolution_instances:
+  evolution_postgres:
+  evolution_redis:

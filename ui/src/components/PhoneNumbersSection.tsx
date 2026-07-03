@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth";
 
 interface Did {
@@ -109,7 +110,26 @@ export function PhoneNumbersSection() {
     }
   }
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-28" />
+          <div className="flex flex-wrap gap-2">
+            <Skeleton className="h-8 w-40 rounded-md" />
+            <Skeleton className="h-8 w-40 rounded-md" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Skeleton className="h-16 w-full rounded-md" />
+            <Skeleton className="h-16 w-full rounded-md" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const credits = setupSeconds != null ? Math.round(setupSeconds / 60) : null;
 

@@ -376,7 +376,7 @@ export default function NewCampaignPage() {
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back to Campaigns
                 </Button>
-                <p className="text-eyebrow text-muted-foreground">New Campaign</p>
+                <p className="text-eyebrow text-primary">New Campaign</p>
                 <h1 className="mt-1 text-h1 text-foreground">Create New Campaign</h1>
                 <p className="mt-1 text-body text-muted-foreground">Set up a new campaign to execute workflows at scale</p>
             </div>

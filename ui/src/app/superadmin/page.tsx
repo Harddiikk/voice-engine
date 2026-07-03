@@ -51,7 +51,7 @@ export default function SuperadminPage() {
         <>
             <main className="container mx-auto p-6 space-y-6 max-w-4xl">
                 <div className="text-center">
-                    <h1 className="text-3xl font-bold mb-2">Superadmin Dashboard</h1>
+                    <h1 className="text-h1 mb-2">Superadmin Dashboard</h1>
                     <p className="text-sm text-muted-foreground">Manage users and view system-wide data</p>
                 </div>
 

@@ -97,7 +97,7 @@ export default function CampaignsPage() {
         <div className="container mx-auto space-y-8 px-4 py-10">
             <div className="flex flex-wrap items-end justify-between gap-4">
                 <div className="space-y-1">
-                    <p className="text-eyebrow text-muted-foreground">Outbound</p>
+                    <p className="text-eyebrow text-primary">Outbound</p>
                     <h1 className="text-h1 text-foreground">Campaigns</h1>
                     <p className="text-body text-muted-foreground">
                         Manage your bulk workflow execution campaigns.
