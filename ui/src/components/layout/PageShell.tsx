@@ -16,7 +16,10 @@ import { cn } from "@/lib/utils";
 const WIDTHS = {
   narrow: "max-w-2xl",
   default: "max-w-4xl",
-  wide: "max-w-6xl",
+  // Data-dense pages (dashboards, tables, analytics) fill more of the screen —
+  // 1536px reclaims the wasted horizontal margin on wide monitors while staying
+  // readable. Forms stay narrow/default on purpose (line length).
+  wide: "max-w-[96rem]",
   full: "max-w-none",
 } as const;
 

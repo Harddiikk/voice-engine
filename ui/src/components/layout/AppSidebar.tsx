@@ -23,7 +23,6 @@ import {
   PhoneCall,
   PhoneIncoming,
   Settings,
-  ShieldCheck,
   Sparkles,
   UserRound,
   Users,
@@ -103,16 +102,6 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         url: "/home",
         icon: Home,
       },
-      {
-        title: "Analytics",
-        url: "/analytics",
-        icon: BarChart3,
-      },
-      {
-        title: "KYC",
-        url: "/kyc",
-        icon: ShieldCheck,
-      },
     ],
   },
   {
@@ -171,6 +160,16 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "CRM",
         url: "/integrations/crm",
         icon: Contact,
+      },
+    ],
+  },
+  {
+    label: "ANALYTICS",
+    items: [
+      {
+        title: "Analytics",
+        url: "/analytics",
+        icon: BarChart3,
       },
     ],
   },

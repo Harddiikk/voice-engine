@@ -41,7 +41,9 @@ export default function NewCampaignPage() {
     // Form state
     const [campaignName, setCampaignName] = useState('');
     const [selectedWorkflowId, setSelectedWorkflowId] = useState<string>('');
-    const [sourceType, setSourceType] = useState<'csv'>('csv');
+    // CSV is the only data source; the Dropbox-style uploader below replaces the
+    // former single-option "Data Source Type" dropdown.
+    const sourceType = 'csv' as const;
     const [sourceId, setSourceId] = useState('');
     const [selectedFileName, setSelectedFileName] = useState('');
     const [defaultCountryCode, setDefaultCountryCode] = useState<string>('+91');
@@ -488,29 +490,6 @@ export default function NewCampaignPage() {
                                 )}
                                 <p className="text-sm text-muted-foreground">
                                     Outbound calls for this campaign will use this configuration&apos;s caller IDs
-                                </p>
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label htmlFor="source-type">Data Source Type</Label>
-                                <Select
-                                    value={sourceType}
-                                    onValueChange={(value) => {
-                                        setSourceType(value as 'csv');
-                                        setSourceId('');
-                                        setSelectedFileName('');
-                                    }}
-                                    required
-                                >
-                                    <SelectTrigger id="source-type">
-                                        <SelectValue placeholder="Select source type" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="csv">CSV File</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-sm text-muted-foreground">
-                                    Choose where your contact data is stored
                                 </p>
                             </div>
 
