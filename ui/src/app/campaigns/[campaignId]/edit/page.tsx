@@ -11,7 +11,7 @@ import {
     getCampaignDefaultsApiV1OrganizationsCampaignDefaultsGet,
     updateCampaignApiV1CampaignCampaignIdPatch
 } from '@/client/sdk.gen';
-import type { CampaignResponse } from '@/client/types.gen';
+import type { CampaignResponse, UpdateCampaignRequest } from '@/client/types.gen';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -49,6 +49,9 @@ export default function EditCampaignPage() {
     const [retryOnBusy, setRetryOnBusy] = useState(true);
     const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
     const [retryOnVoicemail, setRetryOnVoicemail] = useState(true);
+    // Hang up on voicemail / IVR — default ON (matches default-on voicemail
+    // detection). Populated from the campaign on load.
+    const [hangupOnVoicemail, setHangupOnVoicemail] = useState(true);
 
     // Schedule config state
     const [scheduleEnabled, setScheduleEnabled] = useState(false);
@@ -119,6 +122,11 @@ export default function EditCampaignPage() {
                     setCircuitBreakerWindowSeconds(String(cb.window_seconds));
                     setCircuitBreakerMinCalls(String(cb.min_calls_in_window));
                 }
+
+                // Hang up on voicemail — inherit the workflow default (ON) when
+                // the campaign hasn't set an explicit override.
+                const hov = (c as unknown as { hangup_on_voicemail?: boolean | null }).hangup_on_voicemail;
+                setHangupOnVoicemail(typeof hov === 'boolean' ? hov : true);
             }
         } catch (error) {
             console.error('Failed to fetch campaign:', error);
@@ -252,7 +260,8 @@ export default function EditCampaignPage() {
                     max_concurrency: maxConcurrencyValue,
                     schedule_config: scheduleConfig,
                     circuit_breaker: circuitBreakerConfig,
-                },
+                    hangup_on_voicemail: hangupOnVoicemail,
+                } as unknown as UpdateCampaignRequest,
                 headers: { 'Authorization': `Bearer ${accessToken}` },
             });
 
@@ -364,6 +373,8 @@ export default function EditCampaignPage() {
                             onRetryOnNoAnswerChange={setRetryOnNoAnswer}
                             retryOnVoicemail={retryOnVoicemail}
                             onRetryOnVoicemailChange={setRetryOnVoicemail}
+                            hangupOnVoicemail={hangupOnVoicemail}
+                            onHangupOnVoicemailChange={setHangupOnVoicemail}
                             scheduleEnabled={scheduleEnabled}
                             onScheduleEnabledChange={setScheduleEnabled}
                             scheduleTimezone={scheduleTimezone}

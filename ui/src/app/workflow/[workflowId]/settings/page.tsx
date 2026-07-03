@@ -38,11 +38,9 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-    deriveVoiceTargetFromEffective,
-    deriveVoiceTargetFromV2,
+    deriveVoicePickTarget,
     VoiceLanguagePicker,
     voicePickOptions,
-    type VoicePickTarget,
 } from "@/components/VoiceLanguagePicker";
 import { SETTINGS_DOCUMENTATION_URLS } from "@/constants/documentation";
 import { UnsavedChangesProvider, useUnsavedChanges, useUnsavedChangesContext } from "@/context/UnsavedChangesContext";
@@ -1067,27 +1065,6 @@ function AgentUuidSection({ workflowUuid }: { workflowUuid: string }) {
 // ---------------------------------------------------------------------------
 // Section: Voice (per-agent voice pick — visible to all users)
 // ---------------------------------------------------------------------------
-
-/**
- * Resolve which service the voice pick applies to: a workflow-level full v2
- * override wins over the organization's effective configuration — mirroring
- * the backend resolution in get_effective_ai_model_configuration_for_workflow.
- */
-function deriveVoicePickTarget(
-    workflowConfigurations: WorkflowConfigurations,
-    organizationModelConfiguration: OrganizationAiModelConfigurationResponse | null,
-): VoicePickTarget | null {
-    const v2Override = workflowConfigurations.model_configuration_v2_override;
-    if (v2Override) {
-        return deriveVoiceTargetFromV2(v2Override as unknown as Record<string, unknown>);
-    }
-    return deriveVoiceTargetFromEffective(
-        organizationModelConfiguration?.effective_configuration as
-            | Record<string, unknown>
-            | null
-            | undefined,
-    );
-}
 
 function WorkflowVoiceSection({
     workflowConfigurations,

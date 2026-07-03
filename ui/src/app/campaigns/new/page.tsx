@@ -69,6 +69,9 @@ export default function NewCampaignPage() {
     const [retryOnBusy, setRetryOnBusy] = useState(true);
     const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
     const [retryOnVoicemail, setRetryOnVoicemail] = useState(true);
+    // Hang up on voicemail / IVR — default ON to match the platform's
+    // default-on voicemail detection (saves credits on answering machines).
+    const [hangupOnVoicemail, setHangupOnVoicemail] = useState(true);
     // Schedule config state — default calling window: 09:00-21:00 IST every
     // day (mirrors the backend's DEFAULT_CAMPAIGN_CALLING_WINDOW). Restored
     // last-campaign settings (below) intentionally override these defaults.
@@ -166,6 +169,7 @@ export default function NewCampaignPage() {
                     max_concurrency?: number | null;
                     schedule_config?: { enabled: boolean; timezone: string; slots: TimeSlot[] } | null;
                     circuit_breaker?: { enabled: boolean; failure_threshold: number; window_seconds: number; min_calls_in_window: number } | null;
+                    hangup_on_voicemail?: boolean | null;
                 } | null }).last_campaign_settings;
 
                 if (last) {
@@ -199,6 +203,9 @@ export default function NewCampaignPage() {
                         setCircuitBreakerFailureThreshold(String(Math.round(last.circuit_breaker.failure_threshold * 100)));
                         setCircuitBreakerWindowSeconds(String(last.circuit_breaker.window_seconds));
                         setCircuitBreakerMinCalls(String(last.circuit_breaker.min_calls_in_window));
+                    }
+                    if (typeof last.hangup_on_voicemail === 'boolean') {
+                        setHangupOnVoicemail(last.hangup_on_voicemail);
                     }
                 } else {
                     // No previous campaign — use defaults
@@ -316,6 +323,7 @@ export default function NewCampaignPage() {
                     circuit_breaker: circuitBreakerConfig,
                     column_mapping: Object.keys(columnMapping).length ? columnMapping : undefined,
                     default_country_code: defaultCountryCode !== 'none' ? defaultCountryCode : undefined,
+                    hangup_on_voicemail: hangupOnVoicemail,
                 } as unknown as CreateCampaignRequest,
                 headers: {
                     'Authorization': `Bearer ${accessToken}`,
@@ -579,6 +587,8 @@ export default function NewCampaignPage() {
                                         onRetryOnNoAnswerChange={setRetryOnNoAnswer}
                                         retryOnVoicemail={retryOnVoicemail}
                                         onRetryOnVoicemailChange={setRetryOnVoicemail}
+                                        hangupOnVoicemail={hangupOnVoicemail}
+                                        onHangupOnVoicemailChange={setHangupOnVoicemail}
                                         scheduleEnabled={scheduleEnabled}
                                         onScheduleEnabledChange={setScheduleEnabled}
                                         scheduleTimezone={scheduleTimezone}

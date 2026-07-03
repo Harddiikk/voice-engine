@@ -1202,6 +1202,7 @@ class LastCampaignSettingsResponse(BaseModel):
     max_concurrency: Optional[int] = None
     schedule_config: Optional[ScheduleConfigResponse] = None
     circuit_breaker: Optional[CircuitBreakerConfigResponse] = None
+    hangup_on_voicemail: Optional[bool] = None
 
 
 class CampaignDefaultsResponse(BaseModel):
@@ -1275,8 +1276,12 @@ async def get_campaign_defaults(user: UserModel = Depends(get_user)):
             max_conc = None
             sched = None
             cb = CircuitBreakerConfigResponse()
+            hangup_on_voicemail = None
             if last_campaign.orchestrator_metadata:
                 max_conc = last_campaign.orchestrator_metadata.get("max_concurrency")
+                hangup_on_voicemail = last_campaign.orchestrator_metadata.get(
+                    "hangup_on_voicemail"
+                )
                 sc = last_campaign.orchestrator_metadata.get("schedule_config")
                 if sc:
                     sched = ScheduleConfigResponse(
@@ -1297,6 +1302,7 @@ async def get_campaign_defaults(user: UserModel = Depends(get_user)):
                 max_concurrency=max_conc,
                 schedule_config=sched,
                 circuit_breaker=cb,
+                hangup_on_voicemail=hangup_on_voicemail,
             )
     except Exception:
         pass

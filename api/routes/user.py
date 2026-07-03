@@ -427,8 +427,25 @@ class RealtimeVoicePreviewResponse(BaseModel):
 
 
 # NOTE: registered before the dynamic /configurations/voices/{provider} route
-# below so "realtime-preview" is matched here instead of being captured (and
+# below so these fixed paths are matched here instead of being captured (and
 # rejected) as a provider path parameter.
+@router.get("/configurations/voices/realtime-catalog")
+async def get_realtime_voice_catalog(
+    provider: str = "google_realtime",
+    user: UserModel = Depends(get_user),
+) -> list[dict]:
+    """Prebuilt realtime voices with perceived gender + character, so the UI
+    can show tags and let the user preview each before choosing. Only
+    google_realtime / google_vertex_realtime have a catalog today."""
+    from api.services.configuration.options.google import (
+        GOOGLE_REALTIME_VOICE_DETAILS,
+    )
+
+    if provider in ("google_realtime", "google_vertex_realtime"):
+        return [dict(v) for v in GOOGLE_REALTIME_VOICE_DETAILS]
+    return []
+
+
 @router.get("/configurations/voices/realtime-preview")
 async def get_realtime_voice_preview_route(
     provider: str,

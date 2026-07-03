@@ -10,7 +10,8 @@ import {
     duplicateWorkflowEndpointApiV1WorkflowWorkflowIdDuplicatePost,
     publishWorkflowApiV1WorkflowWorkflowIdPublishPost,
 } from "@/client/sdk.gen";
-import { WorkflowError } from "@/client/types.gen";
+import type { OrganizationAiModelConfigurationResponse, WorkflowError } from "@/client/types.gen";
+import type { ModelConfigurationDefaultsV2 } from "@/components/AIModelConfigurationV2Editor";
 import { FlowEdge, FlowNode } from "@/components/flow/types";
 import { GitHubStarBadge } from "@/components/layout/GitHubStarBadge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,9 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { useSidebar } from "@/components/ui/sidebar";
+import type { WorkflowConfigurations } from "@/types/workflow-configurations";
+
+import { VoicePickerPopover } from "./VoicePickerPopover";
 
 interface WorkflowEditorHeaderProps {
     workflowName: string;
@@ -46,6 +50,11 @@ interface WorkflowEditorHeaderProps {
     hasDraft: boolean;
     onPublished: () => void;
     renameWorkflow: (newName: string) => Promise<void>;
+    // Quick voice picker (top bar) — model config is fetched by the editor.
+    workflowConfigurations: WorkflowConfigurations | null;
+    saveWorkflowConfigurations: (configurations: WorkflowConfigurations, workflowName: string) => Promise<void>;
+    modelConfigurationDefaults: ModelConfigurationDefaultsV2 | null;
+    organizationModelConfiguration: OrganizationAiModelConfigurationResponse | null;
 }
 
 export const WorkflowEditorHeader = ({
@@ -65,6 +74,10 @@ export const WorkflowEditorHeader = ({
     workflowId,
     workflowUuid,
     renameWorkflow,
+    workflowConfigurations,
+    saveWorkflowConfigurations,
+    modelConfigurationDefaults,
+    organizationModelConfiguration,
 }: WorkflowEditorHeaderProps) => {
     const router = useRouter();
     const { toggleSidebar } = useSidebar();
@@ -405,6 +418,18 @@ export const WorkflowEditorHeader = ({
                             </>
                         )}
                     </Button>
+                )}
+
+                {/* Quick voice picker — save is independent of canvas edits */}
+                {workflowConfigurations && (
+                    <VoicePickerPopover
+                        workflowConfigurations={workflowConfigurations}
+                        workflowName={workflowName}
+                        onSave={saveWorkflowConfigurations}
+                        modelConfigurationDefaults={modelConfigurationDefaults}
+                        organizationModelConfiguration={organizationModelConfiguration}
+                        disabled={isViewingHistoricalVersion}
+                    />
                 )}
 
                 {!isViewingHistoricalVersion && (

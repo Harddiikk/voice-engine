@@ -305,6 +305,12 @@ class CampaignCallDispatcher:
             "caller_number": from_number,
             "called_number": phone_number,
             "telephony_configuration_id": campaign.telephony_configuration_id,
+            # Per-campaign voicemail hangup override (None => inherit the
+            # workflow's voicemail_detection.enabled default). Read by
+            # run_pipeline to gate the voicemail detector.
+            "hangup_on_voicemail": (campaign.orchestrator_metadata or {}).get(
+                "hangup_on_voicemail"
+            ),
         }
 
         logger.info(f"Final initial_context: {initial_context}")

@@ -720,24 +720,44 @@ async def _run_pipeline(
     voicemail_config = (workflow.workflow_configurations or {}).get(
         "voicemail_detection", {}
     )
-    # Default ON for outbound (non-realtime) calls so we never burn minutes on an
-    # answering machine / IVR. A workflow can opt out with
-    # voicemail_detection.enabled = false. Realtime (speech-to-speech) can't run
-    # the classifier sub-pipeline, so it's skipped there.
-    voicemail_enabled = voicemail_config.get("enabled", True)
-    if is_realtime and voicemail_enabled:
-        logger.info(
-            f"Disabling voicemail detection for realtime workflow run {workflow_run_id}"
-        )
-    if voicemail_enabled and not is_realtime:
+    # Default ON for outbound calls so we never burn minutes on an answering
+    # machine / IVR. Enablement resolves in priority order (first non-null wins):
+    #   1. per-campaign `hangup_on_voicemail` toggle (persisted on the run's
+    #      initial_context by the campaign dispatcher)
+    #   2. workflow's voicemail_detection.enabled
+    #   3. default True
+    # The parallel classifier branch works in both the non-realtime and realtime
+    # (speech-to-speech) pipeline layouts, so detection is honored in either mode.
+    campaign_hangup_on_voicemail = merged_call_context_vars.get("hangup_on_voicemail")
+    if campaign_hangup_on_voicemail is not None:
+        voicemail_enabled = bool(campaign_hangup_on_voicemail)
+    else:
+        voicemail_enabled = voicemail_config.get("enabled", True)
+
+    if voicemail_enabled:
         logger.info(f"Voicemail detection enabled for workflow run {workflow_run_id}")
-        # Create a separate LLM instance for the voicemail sub-pipeline
-        # (can't share with main pipeline as it would mess up frame linking)
+        # Pick the LLM that classifies conversation-vs-voicemail in the detector's
+        # parallel sub-pipeline branch:
+        #   - realtime + use_workflow_llm: reuse the already-created side-channel
+        #     `inference_llm`. The realtime speech-to-speech service can't run a
+        #     text classification, and reusing the existing text LLM avoids opening
+        #     a second managed-model connection. Sharing is safe because the engine
+        #     only uses `inference_llm` for out-of-band `run_inference` (a direct,
+        #     standalone client call that bypasses the pipeline) and always passes
+        #     an explicit system_instruction, so the detector's classifier prompt
+        #     never leaks into variable extraction.
+        #   - non-realtime + use_workflow_llm: create a *separate* instance sharing
+        #     the workflow's LLM config, so its frame links stay independent of the
+        #     main pipeline's LLM.
+        #   - use_workflow_llm=false: an explicitly configured provider/model.
         if voicemail_config.get("use_workflow_llm", True):
-            voicemail_llm = create_llm_service(
-                user_config,
-                correlation_id=mps_correlation_id,
-            )
+            if is_realtime:
+                voicemail_llm = inference_llm
+            else:
+                voicemail_llm = create_llm_service(
+                    user_config,
+                    correlation_id=mps_correlation_id,
+                )
         else:
             voicemail_llm = create_llm_service_from_provider(
                 provider=voicemail_config.get("provider", "openai"),

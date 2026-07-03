@@ -43,6 +43,9 @@ export interface CampaignAdvancedSettingsProps {
     onRetryOnNoAnswerChange: (value: boolean) => void;
     retryOnVoicemail: boolean;
     onRetryOnVoicemailChange: (value: boolean) => void;
+    // Voicemail / IVR hangup
+    hangupOnVoicemail: boolean;
+    onHangupOnVoicemailChange: (value: boolean) => void;
     // Schedule config
     scheduleEnabled: boolean;
     onScheduleEnabledChange: (value: boolean) => void;
@@ -113,6 +116,7 @@ export default function CampaignAdvancedSettings({
     retryDelaySeconds, onRetryDelaySecondsChange,
     retryOnBusy, onRetryOnBusyChange, retryOnNoAnswer, onRetryOnNoAnswerChange,
     retryOnVoicemail, onRetryOnVoicemailChange,
+    hangupOnVoicemail, onHangupOnVoicemailChange,
     scheduleEnabled, onScheduleEnabledChange, scheduleTimezone, onScheduleTimezoneChange,
     timeSlots, onTimeSlotsChange,
     circuitBreakerEnabled, onCircuitBreakerEnabledChange,
@@ -214,6 +218,23 @@ export default function CampaignAdvancedSettings({
                         </div>
                     </div>
                 )}
+            </div>
+
+            <Separator />
+
+            {/* Hang up on voicemail / IVR */}
+            <div className="flex items-center justify-between">
+                <div className="pr-4">
+                    <Label htmlFor="hangup-on-voicemail">Hang up on voicemail / IVR</Label>
+                    <p className="text-sm text-muted-foreground">
+                        The agent detects an answering machine, IVR, or &quot;leave a message&quot; greeting and ends the call immediately to save credits.
+                    </p>
+                </div>
+                <Switch
+                    id="hangup-on-voicemail"
+                    checked={hangupOnVoicemail}
+                    onCheckedChange={onHangupOnVoicemailChange}
+                />
             </div>
 
             <Separator />

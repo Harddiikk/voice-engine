@@ -10,8 +10,9 @@ import { BrushCleaning, Maximize2, Minus, Plus, Settings } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { createWorkflowDraftApiV1WorkflowWorkflowIdCreateDraftPost, getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet, listDocumentsApiV1KnowledgeBaseDocumentsGet, listRecordingsApiV1WorkflowRecordingsGet, listToolsApiV1ToolsGet } from '@/client';
-import type { DocumentResponseSchema, RecordingResponseSchema, ToolResponse } from '@/client/types.gen';
+import { createWorkflowDraftApiV1WorkflowWorkflowIdCreateDraftPost, getModelConfigurationV2ApiV1OrganizationsModelConfigurationsV2Get, getModelConfigurationV2DefaultsApiV1OrganizationsModelConfigurationsV2DefaultsGet, getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet, listDocumentsApiV1KnowledgeBaseDocumentsGet, listRecordingsApiV1WorkflowRecordingsGet, listToolsApiV1ToolsGet } from '@/client';
+import type { DocumentResponseSchema, OrganizationAiModelConfigurationResponse, RecordingResponseSchema, ToolResponse } from '@/client/types.gen';
+import type { ModelConfigurationDefaultsV2 } from "@/components/AIModelConfigurationV2Editor";
 import { useNodeSpecs } from "@/components/flow/renderer";
 import { FlowEdge, FlowNode, NodeType } from "@/components/flow/types";
 import { HireExpertNudge } from "@/components/lead-forms/HireExpertNudge";
@@ -96,6 +97,9 @@ function RenderWorkflow({
     const [tools, setTools] = useState<ToolResponse[] | undefined>(undefined);
     const [recordings, setRecordings] = useState<RecordingResponseSchema[]>([]);
     const [activeRuntimeNodeId, setActiveRuntimeNodeId] = useState<string | null>(null);
+    // Org model config for the top-bar quick voice picker (fetched once).
+    const [modelConfigurationDefaults, setModelConfigurationDefaults] = useState<ModelConfigurationDefaultsV2 | null>(null);
+    const [organizationModelConfiguration, setOrganizationModelConfiguration] = useState<OrganizationAiModelConfigurationResponse | null>(null);
 
     const {
         rfInstance,
@@ -338,6 +342,20 @@ function RenderWorkflow({
     useEffect(() => {
         const fetchData = async () => {
             try {
+                // Model configuration for the top-bar quick voice picker. Same
+                // pair the workflow settings page fetches; errors are non-fatal
+                // (the picker shows a "needs a configured model" message).
+                const [defaultsResult, orgConfigResult] = await Promise.all([
+                    getModelConfigurationV2DefaultsApiV1OrganizationsModelConfigurationsV2DefaultsGet(),
+                    getModelConfigurationV2ApiV1OrganizationsModelConfigurationsV2Get(),
+                ]);
+                if (!defaultsResult.error && defaultsResult.data) {
+                    setModelConfigurationDefaults(defaultsResult.data as ModelConfigurationDefaultsV2);
+                }
+                if (!orgConfigResult.error) {
+                    setOrganizationModelConfiguration(orgConfigResult.data ?? null);
+                }
+
                 // Fetch documents
                 const documentsResponse = await listDocumentsApiV1KnowledgeBaseDocumentsGet({
                     query: { limit: 100 },
@@ -502,6 +520,10 @@ function RenderWorkflow({
                     hasDraft={hasDraft}
                     onPublished={handlePublished}
                     renameWorkflow={renameWorkflow}
+                    workflowConfigurations={workflowConfigurations}
+                    saveWorkflowConfigurations={saveWorkflowConfigurations}
+                    modelConfigurationDefaults={modelConfigurationDefaults}
+                    organizationModelConfiguration={organizationModelConfiguration}
                 />
 
                 {/* Workflow Canvas */}

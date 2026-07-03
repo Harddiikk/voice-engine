@@ -205,6 +205,10 @@ class CreateCampaignRequest(BaseModel):
     # auto-detected when not mapped.
     column_mapping: Optional[Dict[str, str]] = None
     default_country_code: Optional[str] = None
+    # Overrides the workflow's voicemail_detection.enabled for this campaign's
+    # runs. When None, the workflow default applies. When set, controls whether
+    # the agent hangs up on an answering machine / IVR greeting.
+    hangup_on_voicemail: Optional[bool] = None
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -213,6 +217,7 @@ class UpdateCampaignRequest(BaseModel):
     max_concurrency: Optional[int] = Field(default=None, ge=1, le=100)
     schedule_config: Optional[ScheduleConfigRequest] = None
     circuit_breaker: Optional[CircuitBreakerConfigRequest] = None
+    hangup_on_voicemail: Optional[bool] = None
 
 
 class CampaignLogEntryResponse(BaseModel):
@@ -247,6 +252,9 @@ class CampaignResponse(BaseModel):
     max_concurrency: Optional[int] = None
     schedule_config: Optional[ScheduleConfigResponse] = None
     circuit_breaker: Optional[CircuitBreakerConfigResponse] = None
+    # Per-campaign override of the workflow's voicemail hangup behavior. None
+    # means "inherit the workflow default".
+    hangup_on_voicemail: Optional[bool] = None
     # Campaign spend derived from total call duration (see CAMPAIGN_SPEND_RATE).
     spent_seconds: int = 0
     spent_minutes: float = 0.0
@@ -326,9 +334,11 @@ def _build_campaign_response(
     circuit_breaker_config = CircuitBreakerConfigResponse()
     parent_campaign_id = None
     redialed_campaign_id = None
+    hangup_on_voicemail = None
     consumed_seconds = 0
     if campaign.orchestrator_metadata:
         max_concurrency = campaign.orchestrator_metadata.get("max_concurrency")
+        hangup_on_voicemail = campaign.orchestrator_metadata.get("hangup_on_voicemail")
         sc = campaign.orchestrator_metadata.get("schedule_config")
         if sc:
             schedule_config = ScheduleConfigResponse(
@@ -375,6 +385,7 @@ def _build_campaign_response(
         max_concurrency=max_concurrency,
         schedule_config=schedule_config,
         circuit_breaker=circuit_breaker_config,
+        hangup_on_voicemail=hangup_on_voicemail,
         spent_seconds=spent_seconds,
         spent_minutes=spent_minutes,
         spent_inr=spent_inr,
@@ -543,6 +554,7 @@ async def create_campaign(
         telephony_configuration_id=telephony_configuration_id,
         column_mapping=request.column_mapping,
         default_country_code=request.default_country_code,
+        hangup_on_voicemail=request.hangup_on_voicemail,
     )
 
     cfg_name = await _get_telephony_configuration_name(
@@ -854,6 +866,10 @@ async def update_campaign(
 
     if request.circuit_breaker is not None:
         metadata["circuit_breaker"] = request.circuit_breaker.model_dump()
+        metadata_changed = True
+
+    if request.hangup_on_voicemail is not None:
+        metadata["hangup_on_voicemail"] = request.hangup_on_voicemail
         metadata_changed = True
 
     if metadata_changed:

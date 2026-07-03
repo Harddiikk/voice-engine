@@ -12,7 +12,46 @@ GOOGLE_VERTEX_MODELS = (
 )
 
 GOOGLE_REALTIME_MODELS = ("gemini-3.1-flash-live-preview",)
-GOOGLE_REALTIME_VOICES = ("Puck", "Charon", "Kore", "Fenrir", "Aoede")
+
+# Full Gemini Live / native-audio prebuilt voice catalog. Each entry carries a
+# commonly-perceived gender and a one-word character so the UI can show tags and
+# let the user preview before choosing. Google does not officially gender these
+# voices; "gender" is the widely-perceived character, offered only as a picking
+# aid. All names are valid `prebuiltVoiceConfig.voiceName` values for the Live
+# and TTS models, so the voice-preview endpoint can synthesize any of them.
+GOOGLE_REALTIME_VOICE_DETAILS = (
+    {"name": "Zephyr", "gender": "female", "characteristic": "Bright"},
+    {"name": "Puck", "gender": "male", "characteristic": "Upbeat"},
+    {"name": "Charon", "gender": "male", "characteristic": "Informative"},
+    {"name": "Kore", "gender": "female", "characteristic": "Firm"},
+    {"name": "Fenrir", "gender": "male", "characteristic": "Excitable"},
+    {"name": "Leda", "gender": "female", "characteristic": "Youthful"},
+    {"name": "Orus", "gender": "male", "characteristic": "Firm"},
+    {"name": "Aoede", "gender": "female", "characteristic": "Breezy"},
+    {"name": "Callirrhoe", "gender": "female", "characteristic": "Easy-going"},
+    {"name": "Autonoe", "gender": "female", "characteristic": "Bright"},
+    {"name": "Enceladus", "gender": "male", "characteristic": "Breathy"},
+    {"name": "Iapetus", "gender": "male", "characteristic": "Clear"},
+    {"name": "Umbriel", "gender": "male", "characteristic": "Easy-going"},
+    {"name": "Algieba", "gender": "male", "characteristic": "Smooth"},
+    {"name": "Despina", "gender": "female", "characteristic": "Smooth"},
+    {"name": "Erinome", "gender": "female", "characteristic": "Clear"},
+    {"name": "Algenib", "gender": "male", "characteristic": "Gravelly"},
+    {"name": "Rasalgethi", "gender": "male", "characteristic": "Informative"},
+    {"name": "Laomedeia", "gender": "female", "characteristic": "Upbeat"},
+    {"name": "Achernar", "gender": "female", "characteristic": "Soft"},
+    {"name": "Alnilam", "gender": "male", "characteristic": "Firm"},
+    {"name": "Schedar", "gender": "male", "characteristic": "Even"},
+    {"name": "Gacrux", "gender": "female", "characteristic": "Mature"},
+    {"name": "Pulcherrima", "gender": "female", "characteristic": "Forward"},
+    {"name": "Achird", "gender": "male", "characteristic": "Friendly"},
+    {"name": "Zubenelgenubi", "gender": "male", "characteristic": "Casual"},
+    {"name": "Vindemiatrix", "gender": "female", "characteristic": "Gentle"},
+    {"name": "Sadachbia", "gender": "male", "characteristic": "Lively"},
+    {"name": "Sadaltager", "gender": "male", "characteristic": "Knowledgeable"},
+    {"name": "Sulafat", "gender": "female", "characteristic": "Warm"},
+)
+GOOGLE_REALTIME_VOICES = tuple(v["name"] for v in GOOGLE_REALTIME_VOICE_DETAILS)
 GOOGLE_REALTIME_LANGUAGES = (
     "ar",
     "bn",

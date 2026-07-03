@@ -29,6 +29,7 @@ class CampaignClient(BaseDBClient):
         telephony_configuration_id: Optional[int] = None,
         column_mapping: Optional[dict] = None,
         default_country_code: Optional[str] = None,
+        hangup_on_voicemail: Optional[bool] = None,
     ) -> CampaignModel:
         """Create a new campaign"""
         async with self.async_session() as session:
@@ -44,6 +45,8 @@ class CampaignClient(BaseDBClient):
                 orchestrator_metadata["column_mapping"] = column_mapping
             if default_country_code is not None:
                 orchestrator_metadata["default_country_code"] = default_country_code
+            if hangup_on_voicemail is not None:
+                orchestrator_metadata["hangup_on_voicemail"] = hangup_on_voicemail
 
             campaign = CampaignModel(
                 name=name,
