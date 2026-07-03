@@ -341,15 +341,19 @@ export const updateAdminProfile = (
     body: JSON.stringify(patch),
   });
 
-export const addClientNote = (
+export const addClientNote = async (
   token: string,
   organizationId: number,
   text: string,
-) =>
-  adminFetch<AdminClientNote[]>(token, `/${organizationId}/notes`, {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
+): Promise<AdminClientNote[]> => {
+  // The endpoint returns { organization_id, notes: [...] } — unwrap to the list.
+  const res = await adminFetch<{ notes?: AdminClientNote[] }>(
+    token,
+    `/${organizationId}/notes`,
+    { method: "POST", body: JSON.stringify({ text }) },
+  );
+  return Array.isArray(res?.notes) ? res.notes : [];
+};
 
 export const chargeSetupFee = (
   token: string,
@@ -367,13 +371,18 @@ export const createAdminClient = (token: string, body: CreateAdminClientBody) =>
     body: JSON.stringify(body),
   });
 
-export const listAdminAudit = (
+export const listAdminAudit = async (
   token: string,
   organizationId?: number,
   limit = 50,
-) => {
+): Promise<AdminAuditEntry[]> => {
   const qs = new URLSearchParams();
   if (organizationId != null) qs.set("org_id", String(organizationId));
   qs.set("limit", String(limit));
-  return adminRootFetch<AdminAuditEntry[]>(token, `/audit?${qs.toString()}`);
+  // The endpoint returns { items: [...] } — unwrap to the array the UI maps over.
+  const res = await adminRootFetch<{ items?: AdminAuditEntry[] }>(
+    token,
+    `/audit?${qs.toString()}`,
+  );
+  return Array.isArray(res?.items) ? res.items : [];
 };
