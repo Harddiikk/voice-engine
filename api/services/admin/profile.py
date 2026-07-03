@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from api.constants import CAMPAIGN_SPEND_RATE_INR_PER_MINUTE, NUMBER_PRICE_INR
 from api.db import db_client
@@ -123,13 +124,28 @@ async def is_org_suspended(organization_id: Optional[int]) -> bool:
     return bool((await get_admin_profile(organization_id)).get("suspended"))
 
 
+# "Today" for spend is a calendar day in the deployment's local zone (India),
+# matching the default calling window. Org-specific timezones can be wired later.
+_SPEND_DAY_TZ = ZoneInfo("Asia/Kolkata")
+
+
+def _today_start_utc() -> datetime:
+    """UTC instant of the start of the current local (IST) calendar day."""
+    now_local = datetime.now(_SPEND_DAY_TZ)
+    day_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return day_start_local.astimezone(UTC)
+
+
 async def get_org_money(organization_id: int) -> dict:
-    """Money view for a client: balance + spent, in both seconds and INR at the
-    client's effective per-minute rate."""
+    """Money view for a client: balance, total spent, and TODAY's spend — in
+    both seconds and INR at the client's effective per-minute rate."""
     balance = await db_client.get_free_call_seconds_remaining(organization_id)
     pricing = await get_org_pricing(organization_id)
     rate = pricing["per_minute_inr"]
     spent_seconds = await db_client.sum_spent_seconds(organization_id)
+    spent_today_seconds = await db_client.sum_spent_seconds(
+        organization_id, since=_today_start_utc()
+    )
     return {
         "balance_seconds": balance,
         "unlimited": balance is None,
@@ -139,6 +155,8 @@ async def get_org_money(organization_id: int) -> dict:
         ),
         "spent_seconds": spent_seconds,
         "money_spent_inr": round(spent_seconds / 60 * rate, 2),
+        "spent_today_seconds": spent_today_seconds,
+        "money_spent_today_inr": round(spent_today_seconds / 60 * rate, 2),
     }
 
 

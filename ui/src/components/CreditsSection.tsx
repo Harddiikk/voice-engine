@@ -46,6 +46,7 @@ interface Balance {
   per_minute_inr?: number;
   money_left_inr?: number | null;
   money_spent_inr?: number;
+  money_spent_today_inr?: number;
 }
 
 interface LedgerEntry {
@@ -193,13 +194,19 @@ export function CreditsSection() {
             1 credit = 1 minute of calling.
           </p>
         )}
-        {/* Spend-to-date, in ₹ at the client's effective rate. */}
-        {!data.unlimited && data.money_spent_inr != null && (
+        {/* Today's spend (calendar day, IST), with all-time as a secondary. */}
+        {!data.unlimited && data.money_spent_today_inr != null && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Spent:{" "}
+            Spent today:{" "}
             <span className="font-semibold tabular text-foreground">
-              ₹{data.money_spent_inr.toLocaleString("en-IN")}
+              ₹{data.money_spent_today_inr.toLocaleString("en-IN")}
             </span>
+            {data.money_spent_inr != null && (
+              <span className="text-muted-foreground">
+                {" "}
+                · ₹{data.money_spent_inr.toLocaleString("en-IN")} all-time
+              </span>
+            )}
           </p>
         )}
         {!data.unlimited && (data.on_hold_seconds ?? 0) > 0 && (

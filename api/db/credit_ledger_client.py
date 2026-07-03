@@ -505,22 +505,27 @@ class CreditLedgerClient(BaseDBClient):
     # refund). Used for the "money spent" figure.
     _SPEND_KINDS = ("settle_charge", "number_purchase", "setup_fee")
 
-    async def sum_spent_seconds(self, organization_id: int) -> int:
-        """Total credit-seconds the org has spent (calls + numbers + setup fees).
+    async def sum_spent_seconds(
+        self, organization_id: int, since: Optional[datetime] = None
+    ) -> int:
+        """Credit-seconds the org has spent (calls + numbers + setup fees).
 
         Sums the magnitude of debit rows for the spend kinds; reserves/releases
-        and credits are excluded so this is true consumption.
+        and credits are excluded so this is true consumption. When ``since`` is
+        given (a UTC datetime), only rows created at/after it are counted — used
+        for "spent today".
         """
         async with self.async_session() as session:
-            result = await session.execute(
-                select(
-                    func.coalesce(func.sum(-CreditLedgerModel.delta_seconds), 0)
-                ).where(
-                    CreditLedgerModel.organization_id == organization_id,
-                    CreditLedgerModel.kind.in_(self._SPEND_KINDS),
-                    CreditLedgerModel.delta_seconds < 0,
-                )
+            query = select(
+                func.coalesce(func.sum(-CreditLedgerModel.delta_seconds), 0)
+            ).where(
+                CreditLedgerModel.organization_id == organization_id,
+                CreditLedgerModel.kind.in_(self._SPEND_KINDS),
+                CreditLedgerModel.delta_seconds < 0,
             )
+            if since is not None:
+                query = query.where(CreditLedgerModel.created_at >= since)
+            result = await session.execute(query)
             return int(result.scalar_one() or 0)
 
     async def sum_on_hold_seconds(self, organization_id: int) -> int:
