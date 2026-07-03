@@ -28,6 +28,8 @@ import {
   formatMoneyBalance,
   planLabel,
 } from "@/components/admin/adminFormat";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell } from "@/components/layout/PageShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -319,23 +321,14 @@ export default function ClientsPage() {
     lowBalanceOnly;
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="stagger container mx-auto max-w-6xl px-4 py-10">
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-eyebrow text-primary">Superuser</p>
-            <h1 className="text-h1 mt-1 flex items-center gap-2.5">
-              <Users className="h-7 w-7 text-muted-foreground" /> Clients
-            </h1>
-            <p className="text-body mt-2 text-muted-foreground">
-              Client organizations, their plan, balance and VoiceLink state.
-              Open{" "}
-              <span className="font-medium text-foreground">Manage</span> on a
-              row to change plan &amp; pricing, provision VoiceLink, view
-              KYC, add ops notes, or suspend the client.
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
+    <PageShell width="wide">
+      <PageHeader
+        eyebrow="Superuser"
+        title="Clients"
+        icon={Users}
+        subtitle="Client organizations, their plan, balance and VoiceLink state. Open Manage on a row to change plan & pricing, provision VoiceLink, view KYC, add ops notes, or suspend the client."
+        actions={
+          <>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <UserPlus className="mr-2 h-4 w-4" />
               New client
@@ -351,11 +344,12 @@ export default function ClientsPage() {
               />
               Refresh
             </Button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {/* Filters */}
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+      {/* Filters */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="relative w-full sm:max-w-xs">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -719,7 +713,6 @@ export default function ClientsPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
-    </div>
+    </PageShell>
   );
 }

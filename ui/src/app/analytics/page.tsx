@@ -3,21 +3,20 @@
 import { Suspense } from 'react';
 
 import { OverviewDashboard } from '@/components/dashboard/OverviewDashboard';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { RunsView } from '../usage/RunsView';
 
 export default function AnalyticsPage() {
   return (
-    <div className="container mx-auto space-y-8 p-6">
-      {/* Premium header */}
-      <div>
-        <p className="text-eyebrow text-primary">Observe</p>
-        <h1 className="text-h1 mt-1">Analytics</h1>
-        <p className="text-body mt-1 text-muted-foreground">
-          Performance insights and a complete history of every agent run, in one place.
-        </p>
-      </div>
+    <PageShell width="wide">
+      <PageHeader
+        eyebrow="Observe"
+        title="Analytics"
+        subtitle="Performance insights and a complete history of every agent run, in one place."
+      />
 
       <Suspense fallback={null}>
         <Tabs defaultValue="overview" className="gap-6">
@@ -45,6 +44,6 @@ export default function AnalyticsPage() {
           </TabsContent>
         </Tabs>
       </Suspense>
-    </div>
+    </PageShell>
   );
 }

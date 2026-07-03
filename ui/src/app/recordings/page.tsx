@@ -3,6 +3,8 @@
 import { ExternalLink, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell } from "@/components/layout/PageShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -25,20 +27,19 @@ export default function RecordingsPage() {
 
     if (loading || !user) {
         return (
-            <div className="container mx-auto px-4 py-8">
+            <PageShell width="wide">
                 <div className="space-y-4">
                     <Skeleton className="h-12 w-64" />
                     <Skeleton className="h-64 w-full" />
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     return (
-        <div className="container mx-auto px-4 py-8">
-            <div className="mb-8">
-                <p className="text-eyebrow text-primary">Media Library</p>
-                <h1 className="text-h1 mt-1">Recordings</h1>
+        <PageShell width="wide">
+            <div>
+                <PageHeader eyebrow="Media Library" title="Recordings" />
                 <p className="text-body mt-1 text-muted-foreground">
                     Manage audio recordings for your organization. Use{" "}
                     <code className="rounded bg-muted px-1 text-xs">@</code> in prompt fields to insert them,
@@ -74,6 +75,6 @@ export default function RecordingsPage() {
                 onOpenChange={setIsUploadOpen}
                 onUploadComplete={() => setRefreshKey((k) => k + 1)}
             />
-        </div>
+        </PageShell>
     );
 }

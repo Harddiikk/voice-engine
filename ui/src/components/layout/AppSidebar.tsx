@@ -104,6 +104,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         icon: Home,
       },
       {
+        title: "Analytics",
+        url: "/analytics",
+        icon: BarChart3,
+      },
+      {
         title: "KYC",
         url: "/kyc",
         icon: ShieldCheck,
@@ -143,6 +148,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         showsTelephonyWarning: true,
       },
       {
+        title: "Phone Numbers",
+        url: "/phone-numbers",
+        icon: PhoneCall,
+      },
+      {
         title: "Inbound",
         url: "/inbound",
         icon: PhoneIncoming,
@@ -161,26 +171,6 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "CRM",
         url: "/integrations/crm",
         icon: Contact,
-      },
-      {
-        title: "Phone Numbers",
-        url: "/phone-numbers",
-        icon: PhoneCall,
-      },
-      {
-        title: "Credits & Billing",
-        url: "/credits",
-        icon: CreditCard,
-      },
-    ],
-  },
-  {
-    label: "MANAGE",
-    items: [
-      {
-        title: "Analytics",
-        url: "/analytics",
-        icon: BarChart3,
       },
     ],
   },
@@ -218,6 +208,11 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Settings",
         url: "/settings",
         icon: Settings,
+      },
+      {
+        title: "Credits & Billing",
+        url: "/credits",
+        icon: CreditCard,
       },
       {
         title: "Clients",

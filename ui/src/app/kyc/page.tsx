@@ -12,6 +12,8 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell } from "@/components/layout/PageShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -251,23 +253,13 @@ export default function KycPage() {
   const progressPct = Math.round((completedSteps / totalSteps) * 100);
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="stagger mx-auto max-w-3xl px-4 py-12">
-        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-eyebrow text-primary">Verification</p>
-            <h1 className="text-h1 mt-1 flex items-center gap-2.5">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <ShieldCheck className="h-5 w-5" />
-              </span>
-              KYC verification
-            </h1>
-            <p className="text-body mt-2 max-w-xl text-muted-foreground">
-              Complete KYC to activate calling on your number. Indian telephony
-              regulations require identity verification before calls can be
-              placed.
-            </p>
-          </div>
+    <PageShell width="default">
+      <PageHeader
+        icon={ShieldCheck}
+        eyebrow="Verification"
+        title="KYC verification"
+        subtitle="Complete KYC to activate calling on your number. Indian telephony regulations require identity verification before calls can be placed."
+        actions={
           <Button
             variant="outline"
             size="sm"
@@ -280,7 +272,8 @@ export default function KycPage() {
             />
             Refresh status
           </Button>
-        </div>
+        }
+      />
 
         {loading ? (
           <div className="grid gap-4">
@@ -657,7 +650,6 @@ export default function KycPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }

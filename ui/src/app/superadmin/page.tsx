@@ -4,6 +4,8 @@ import { ArrowRight, List, Loader2 } from 'lucide-react';
 import Link from "next/link";
 import { useState } from "react";
 
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell } from "@/components/layout/PageShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,14 +50,14 @@ export default function SuperadminPage() {
     };
 
     return (
-        <>
-            <main className="container mx-auto p-6 space-y-6 max-w-4xl">
-                <div className="text-center">
-                    <h1 className="text-h1 mb-2">Superadmin Dashboard</h1>
-                    <p className="text-sm text-muted-foreground">Manage users and view system-wide data</p>
-                </div>
+        <PageShell width="wide">
+            <PageHeader
+                eyebrow="Admin"
+                title="Superadmin Dashboard"
+                subtitle="Manage users and view system-wide data"
+            />
 
-                <div className="grid gap-6 md:grid-cols-2">
+            <div className="grid gap-6 md:grid-cols-2">
                         {/* User Impersonation Card */}
                         <Card>
                             <CardHeader>
@@ -126,7 +128,6 @@ export default function SuperadminPage() {
                             </CardContent>
                         </Card>
                 </div>
-            </main>
-        </>
+        </PageShell>
     );
 }

@@ -4,6 +4,8 @@ import { ArrowRight, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 
 import { OverviewDashboard } from '@/components/dashboard/OverviewDashboard';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { useUserConfig } from '@/context/UserConfigContext';
 
 export default function HomePage() {
@@ -11,22 +13,18 @@ export default function HomePage() {
     const canBuildWithAI = planFeatures.build_with_ai || isSuperuser;
 
     return (
-        <div className="min-h-screen bg-background">
-            <div className="container mx-auto px-4 py-12 max-w-4xl">
-                {/* Dashboard — at-a-glance metrics */}
-                <div className="mb-12">
-                    <p className="text-eyebrow text-primary">Dashboard</p>
-                    <h1 className="text-h1 mt-1">Welcome back</h1>
-                    <p className="text-body mt-1 text-muted-foreground">
-                        Here&apos;s how your voice agents are performing.
-                    </p>
-                    <div className="mt-6">
-                        <OverviewDashboard showHeader={false} />
-                    </div>
-                </div>
+        <PageShell width="default">
+            <PageHeader
+                eyebrow="Dashboard"
+                title="Welcome back"
+                subtitle="Here's how your voice agents are performing."
+            />
 
-                {/* Build with AI — prompt-to-agent entry (Growth & higher only) */}
-                {canBuildWithAI && (
+            {/* Dashboard — at-a-glance metrics */}
+            <OverviewDashboard showHeader={false} />
+
+            {/* Build with AI — prompt-to-agent entry (Growth & higher only) */}
+            {canBuildWithAI && (
                     <Link
                         href="/agent-builder"
                         className="group block rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200 hover:-translate-y-0.5 hover:border-border hover:shadow-[var(--shadow-pop)] focus-visible:ring-1 focus-visible:ring-ring outline-none"
@@ -46,7 +44,6 @@ export default function HomePage() {
                         </div>
                     </Link>
                 )}
-            </div>
-        </div>
+        </PageShell>
     );
 }

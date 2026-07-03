@@ -1,6 +1,7 @@
 import { BadgeCheck, MessageCircle, SlidersHorizontal, Zap } from "lucide-react";
 
 import { IntegrationHero } from "@/components/integrations/IntegrationHero";
+import { PageShell } from "@/components/layout/PageShell";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -31,17 +32,16 @@ const highlights = [
 
 export default function WhatsAppIntegrationPage() {
   return (
-    <div className="flex justify-center px-4 py-12">
-      <div className="stagger w-full max-w-2xl space-y-6">
-        <IntegrationHero
-          icon={MessageCircle}
-          eyebrow="Integration"
-          title="WhatsApp Follow-up"
-          subtitle="Send an approved WhatsApp template to the lead automatically after each call."
-          highlights={highlights}
-        />
+    <PageShell width="narrow">
+      <IntegrationHero
+        icon={MessageCircle}
+        eyebrow="Integration"
+        title="WhatsApp Follow-up"
+        subtitle="Send an approved WhatsApp template to the lead automatically after each call."
+        highlights={highlights}
+      />
 
-        <Card>
+      <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-h3">WhatsApp Follow-up</CardTitle>
@@ -62,7 +62,6 @@ export default function WhatsAppIntegrationPage() {
             <WhatsAppSection />
           </CardContent>
         </Card>
-      </div>
-    </div>
+    </PageShell>
   );
 }

@@ -13,6 +13,8 @@ import {
     reactivateApiKeyApiV1UserApiKeysApiKeyIdReactivatePut
 } from '@/client/sdk.gen';
 import type { ApiKeyResponse, CreateApiKeyResponse, CreateServiceKeyResponse,ServiceKeyResponse } from '@/client/types.gen';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -305,13 +307,13 @@ export default function APIKeysPage() {
     // Don't render content until auth is loaded
     if (loading || !user) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
+            <PageShell width="wide">
                 <div className="w-full max-w-md space-y-4 rounded-2xl border border-border/60 bg-card p-6 shadow-[var(--shadow-card)]">
                     <Skeleton className="h-10 w-48" />
                     <Skeleton className="h-4 w-64" />
                     <Skeleton className="h-40 w-full" />
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
@@ -321,22 +323,21 @@ export default function APIKeysPage() {
     const showServiceKeyArchiveControls = !isOSS;
 
     return (
-        <div className="min-h-screen">
-            <div className="container mx-auto px-4 py-10">
-                <div className="stagger max-w-6xl mx-auto">
-                    <div className="mb-8">
-                        <p className="text-eyebrow text-primary">Developers</p>
-                        <h1 className="text-h1 mt-1">Developer Portal</h1>
-                        <p className="text-body mt-2 text-muted-foreground">Manage your API keys to access {BRAND.name} services programmatically</p>
-                    </div>
+        <>
+        <PageShell width="wide">
+            <PageHeader
+                eyebrow="Developers"
+                title="Developer Portal"
+                subtitle={`Manage your API keys to access ${BRAND.name} services programmatically`}
+            />
 
-                    {error && (
-                        <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-sm text-destructive">
-                            {error}
-                        </div>
-                    )}
+            {error && (
+                <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-sm text-destructive">
+                    {error}
+                </div>
+            )}
 
-                    <Card className="mb-6 rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
+                    <Card className="rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
                         <CardHeader>
                             <div className="flex justify-between items-center gap-4">
                                 <div className="space-y-1.5">
@@ -447,7 +448,7 @@ export default function APIKeysPage() {
                     </Card>
 
                     {/* Dograh Service Keys Section */}
-                    <Card className="mb-6 rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
+                    <Card className="rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
                         <CardHeader>
                             <div className="flex justify-between items-center gap-4">
                                 <div className="space-y-1.5">
@@ -569,8 +570,7 @@ export default function APIKeysPage() {
                             API keys provide full access to your organization&apos;s resources.
                         </p>
                     </div>
-                </div>
-            </div>
+        </PageShell>
 
             {/* Create API Key Dialog */}
             <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
@@ -731,6 +731,6 @@ export default function APIKeysPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </>
     );
 }

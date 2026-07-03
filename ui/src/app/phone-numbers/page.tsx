@@ -1,6 +1,7 @@
 import { PhoneCall, ShieldCheck, Wallet } from "lucide-react";
 
 import { IntegrationHero } from "@/components/integrations/IntegrationHero";
+import { PageShell } from "@/components/layout/PageShell";
 import { PhoneNumbersSection } from "@/components/PhoneNumbersSection";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -31,17 +32,16 @@ const highlights = [
 
 export default function PhoneNumbersPage() {
   return (
-    <div className="flex justify-center px-4 py-12">
-      <div className="stagger w-full max-w-2xl space-y-6">
-        <IntegrationHero
-          icon={PhoneCall}
-          eyebrow="Telephony"
-          title="Phone Numbers"
-          subtitle="Buy and manage outbound numbers for your campaigns."
-          highlights={highlights}
-        />
+    <PageShell width="narrow">
+      <IntegrationHero
+        icon={PhoneCall}
+        eyebrow="Telephony"
+        title="Phone Numbers"
+        subtitle="Buy and manage outbound numbers for your campaigns."
+        highlights={highlights}
+      />
 
-        <Card>
+      <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-h3">Phone Numbers</CardTitle>
@@ -61,7 +61,6 @@ export default function PhoneNumbersPage() {
             <PhoneNumbersSection />
           </CardContent>
         </Card>
-      </div>
-    </div>
+    </PageShell>
   );
 }

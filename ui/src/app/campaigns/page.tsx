@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { getCampaignsApiV1CampaignGet } from '@/client/sdk.gen';
 import type { CampaignsResponse } from '@/client/types.gen';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -94,20 +96,18 @@ export default function CampaignsPage() {
     };
 
     return (
-        <div className="container mx-auto space-y-8 px-4 py-10">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-                <div className="space-y-1">
-                    <p className="text-eyebrow text-primary">Outbound</p>
-                    <h1 className="text-h1 text-foreground">Campaigns</h1>
-                    <p className="text-body text-muted-foreground">
-                        Manage your bulk workflow execution campaigns.
-                    </p>
-                </div>
-                <Button onClick={handleCreateCampaign}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Create Campaign
-                </Button>
-            </div>
+        <PageShell width="wide">
+            <PageHeader
+                eyebrow="Outbound"
+                title="Campaigns"
+                subtitle="Manage your bulk workflow execution campaigns."
+                actions={
+                    <Button onClick={handleCreateCampaign}>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Create Campaign
+                    </Button>
+                }
+            />
 
             <Card className="rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
                 <CardHeader>
@@ -198,6 +198,6 @@ export default function CampaignsPage() {
                     )}
                 </CardContent>
             </Card>
-        </div>
+        </PageShell>
     );
 }

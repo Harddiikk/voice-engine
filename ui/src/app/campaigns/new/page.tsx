@@ -14,6 +14,8 @@ import {
     listTelephonyConfigurationsApiV1OrganizationsTelephonyConfigsGet
 } from '@/client/sdk.gen';
 import type { CreateCampaignRequest, TelephonyConfigurationListItem, WorkflowSummaryResponse } from '@/client/types.gen';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -366,7 +368,7 @@ export default function NewCampaignPage() {
     };
 
     return (
-        <div className="container mx-auto max-w-2xl space-y-6 px-4 py-10 pb-12">
+        <PageShell width="narrow">
             <div>
                 <Button
                     variant="ghost"
@@ -376,9 +378,11 @@ export default function NewCampaignPage() {
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back to Campaigns
                 </Button>
-                <p className="text-eyebrow text-primary">New Campaign</p>
-                <h1 className="mt-1 text-h1 text-foreground">Create New Campaign</h1>
-                <p className="mt-1 text-body text-muted-foreground">Set up a new campaign to execute workflows at scale</p>
+                <PageHeader
+                    eyebrow="New Campaign"
+                    title="Create New Campaign"
+                    subtitle="Set up a new campaign to execute workflows at scale"
+                />
             </div>
 
             <Card className="rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
@@ -636,6 +640,6 @@ export default function NewCampaignPage() {
                         </form>
                     </CardContent>
                 </Card>
-        </div>
+        </PageShell>
     );
 }

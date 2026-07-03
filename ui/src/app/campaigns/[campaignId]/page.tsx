@@ -16,6 +16,8 @@ import {
     startCampaignApiV1CampaignCampaignIdStartPost,
 } from '@/client/sdk.gen';
 import type { CampaignResponse } from '@/client/types.gen';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -472,30 +474,30 @@ export default function CampaignDetailPage() {
 
     if (isLoadingCampaign) {
         return (
-            <div className="container mx-auto space-y-6 px-4 py-10">
+            <PageShell width="wide">
                 <div className="animate-pulse space-y-4">
                     <div className="h-4 w-24 rounded bg-muted/70" />
                     <div className="h-8 w-1/3 rounded-lg bg-muted" />
                     <div className="h-64 rounded-2xl bg-muted/60" />
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     if (!campaign) {
         return (
-            <div className="container mx-auto px-4 py-10">
+            <PageShell width="wide">
                 <Card className="rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)]">
                     <CardContent className="p-12 text-center text-body text-muted-foreground">
                         Campaign not found
                     </CardContent>
                 </Card>
-            </div>
+            </PageShell>
         );
     }
 
     return (
-        <div className="container mx-auto space-y-6 px-4 py-10">
+        <PageShell width="wide">
             <div>
                 <Button
                     variant="ghost"
@@ -505,19 +507,11 @@ export default function CampaignDetailPage() {
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back to Campaigns
                 </Button>
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                        <h1 className="mb-2 text-h1 text-foreground">{campaign.name}</h1>
-                            <div className="flex items-center gap-3">
-                                <Badge variant={getStateBadgeVariant(campaign.state)} className="capitalize">
-                                    {campaign.state}
-                                </Badge>
-                                <span className="text-small tabular-nums text-muted-foreground">
-                                    Created {formatDate(campaign.created_at)}
-                                </span>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-2">
+                <PageHeader
+                    eyebrow="Campaign"
+                    title={campaign.name}
+                    actions={
+                        <>
                             <Popover open={isReportPopoverOpen} onOpenChange={setIsReportPopoverOpen}>
                                 <PopoverTrigger asChild>
                                     <Button variant="outline" disabled={isDownloadingReport}>
@@ -598,9 +592,18 @@ export default function CampaignDetailPage() {
                                 </PopoverContent>
                             </Popover>
                             {renderActionButton()}
-                        </div>
-                    </div>
+                        </>
+                    }
+                />
+                <div className="mt-3 flex items-center gap-3">
+                    <Badge variant={getStateBadgeVariant(campaign.state)} className="capitalize">
+                        {campaign.state}
+                    </Badge>
+                    <span className="text-small tabular-nums text-muted-foreground">
+                        Created {formatDate(campaign.created_at)}
+                    </span>
                 </div>
+            </div>
 
                 {/* Campaign Details */}
                 <Card className="mb-6 rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
@@ -969,6 +972,6 @@ export default function CampaignDetailPage() {
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
-        </div>
+        </PageShell>
     );
 }

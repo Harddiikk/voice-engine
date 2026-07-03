@@ -1,6 +1,8 @@
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { PageHeader } from "@/components/layout/PageHeader";
+
 interface Highlight {
   icon: LucideIcon;
   title: string;
@@ -8,16 +10,16 @@ interface Highlight {
 }
 
 /**
- * Shared hero header for the Integrations pages (WhatsApp, CRM, Phone Numbers,
- * Credits). Renders the icon badge + eyebrow + title + subtitle row and, when
- * provided, the 3-up highlights grid — extracted verbatim from the pages that
- * previously hand-rolled this block so every integration page reads the same.
+ * Integration-page hero: the canonical `PageHeader` (icon badge + eyebrow +
+ * title + subtitle) plus an optional 3-up highlights grid. Built on PageHeader
+ * so the Integrations pages share the exact same header as every other page —
+ * they just add the highlights row on top.
  *
- * Render this as a direct child of the page's `space-y-6` container so the
- * spacing between the header, the grid, and the page's own card is preserved.
+ * Render as a direct child of the page's `PageShell` so its `space-y-6` handles
+ * the gap between the header, the grid, and the page's own card.
  */
 export function IntegrationHero({
-  icon: Icon,
+  icon,
   eyebrow,
   title,
   subtitle,
@@ -33,17 +35,13 @@ export function IntegrationHero({
 }) {
   return (
     <>
-      <div className="flex items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-border/60 bg-accent text-accent-foreground shadow-[var(--shadow-card)]">
-          <Icon className="h-6 w-6" />
-        </div>
-        <div>
-          <p className="text-eyebrow text-primary">{eyebrow}</p>
-          <h1 className="text-h1 mt-1">{title}</h1>
-          <p className="text-body mt-2 text-muted-foreground">{subtitle}</p>
-        </div>
-        {children ? <div className="ml-auto shrink-0">{children}</div> : null}
-      </div>
+      <PageHeader
+        icon={icon}
+        eyebrow={eyebrow}
+        title={title}
+        subtitle={subtitle}
+        actions={children}
+      />
 
       {highlights && highlights.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-3">

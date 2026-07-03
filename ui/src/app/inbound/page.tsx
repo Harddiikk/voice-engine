@@ -13,6 +13,8 @@ import type {
     TelephonyConfigurationListItem,
 } from '@/client/types.gen';
 import { InboundCallsTable } from '@/components/inbound/InboundCallsTable';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { PhoneNumberDialog } from '@/components/telephony/PhoneNumberDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -83,14 +85,12 @@ export default function InboundPage() {
     };
 
     return (
-        <div className="container mx-auto space-y-8 p-6">
-            <div>
-                <p className="text-eyebrow text-primary">Telephony</p>
-                <h1 className="text-h1 mt-1">Inbound</h1>
-                <p className="text-body mt-1 text-muted-foreground">
-                    Route incoming calls to a voice agent and review inbound call history.
-                </p>
-            </div>
+        <PageShell width="wide">
+            <PageHeader
+                eyebrow="Telephony"
+                title="Inbound"
+                subtitle="Route incoming calls to a voice agent and review inbound call history."
+            />
 
             {/* Honest activation note */}
             <Card className="border-primary/30 bg-accent/30">
@@ -224,6 +224,6 @@ export default function InboundPage() {
                     onSaved={fetchAll}
                 />
             )}
-        </div>
+        </PageShell>
     );
 }

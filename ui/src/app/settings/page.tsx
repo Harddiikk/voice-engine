@@ -2,6 +2,8 @@
 
 import { ExternalLink } from "lucide-react";
 
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell } from "@/components/layout/PageShell";
 import { MCPSection } from "@/components/MCPSection";
 import { OrganizationPreferencesSection } from "@/components/OrganizationPreferencesSection";
 import { TelemetrySection } from "@/components/TelemetrySection";
@@ -22,16 +24,12 @@ export default function SettingsPage() {
   const mcp = useFeature("mcp");
 
   return (
-    <div className="flex justify-center px-4 py-12">
-      <div className="stagger w-full max-w-2xl space-y-6">
-        <div>
-          <p className="text-eyebrow text-primary">Configuration</p>
-          <h1 className="text-h1 mt-1">Settings</h1>
-          <p className="text-body mt-2 text-muted-foreground">
-            Platform configuration. Manage Billing, Phone Numbers, WhatsApp and
-            CRM from the Integrations section in the sidebar.
-          </p>
-        </div>
+    <PageShell width="narrow">
+      <PageHeader
+        eyebrow="Configuration"
+        title="Settings"
+        subtitle="Platform configuration. Manage Billing, Phone Numbers, WhatsApp and CRM from the Integrations section in the sidebar."
+      />
 
         <Card className="rounded-2xl border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
           <CardHeader className="gap-1.5">
@@ -88,7 +86,6 @@ export default function SettingsPage() {
             <TelemetrySection />
           </CardContent>
         </Card>
-      </div>
-    </div>
+    </PageShell>
   );
 }

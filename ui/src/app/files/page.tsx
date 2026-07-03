@@ -3,6 +3,8 @@
 import { ExternalLink, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell } from "@/components/layout/PageShell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -37,20 +39,19 @@ export default function FilesPage() {
 
     if (loading || !user) {
         return (
-            <div className="container mx-auto px-4 py-8">
+            <PageShell width="wide">
                 <div className="space-y-4">
                     <Skeleton className="h-12 w-64" />
                     <Skeleton className="h-64 w-full" />
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     return (
-        <div className="container mx-auto px-4 py-8">
-            <div className="mb-8">
-                <p className="text-eyebrow text-primary">Knowledge Base</p>
-                <h1 className="text-h1 mt-1">Knowledge Base Files</h1>
+        <PageShell width="wide">
+            <div>
+                <PageHeader eyebrow="Knowledge Base" title="Knowledge Base Files" />
                 <p className="text-body mt-1 text-muted-foreground">
                     Upload and manage documents for your voice agents to reference.{" "}
                     <a href="https://docs.dograh.com/voice-agent/knowledge-base" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline underline-offset-2 hover:text-foreground">
@@ -90,6 +91,6 @@ export default function FilesPage() {
                     <DocumentUpload onUploadSuccess={handleUploadSuccess} />
                 </DialogContent>
             </Dialog>
-        </div>
+        </PageShell>
     );
 }

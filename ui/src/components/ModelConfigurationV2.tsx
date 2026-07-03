@@ -405,7 +405,7 @@ export default function ModelConfigurationV2({
         return (
             <div className="w-full max-w-4xl mx-auto space-y-6">
                 <div>
-                    <h1 className="text-3xl font-bold">AI Models Configuration</h1>
+                    <h1 className="text-h1">AI Models Configuration</h1>
                     <p className="mt-2 text-sm text-muted-foreground">
                         Voice settings for your organization&apos;s agents.{" "}
                         {docsUrl && (
@@ -447,7 +447,7 @@ export default function ModelConfigurationV2({
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                         <div className="flex items-center gap-2">
-                            <h1 className="text-3xl font-bold">AI Models Configuration</h1>
+                            <h1 className="text-h1">AI Models Configuration</h1>
                             <Badge variant="outline">
                                 {source === "legacy_user_v1" ? "legacy" : "v1"}
                             </Badge>
@@ -507,7 +507,7 @@ export default function ModelConfigurationV2({
         <div className="w-full max-w-4xl mx-auto space-y-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold">AI Models Configuration</h1>
+                    <h1 className="text-h1">AI Models Configuration</h1>
                     <p className="mt-2 text-sm text-muted-foreground">
                         Organization-scoped model settings.{" "}
                         {docsUrl && (

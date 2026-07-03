@@ -2,6 +2,7 @@ import { Database, FileText, SlidersHorizontal, UserPlus } from "lucide-react";
 
 import { CrmSection } from "@/components/CrmSection";
 import { IntegrationHero } from "@/components/integrations/IntegrationHero";
+import { PageShell } from "@/components/layout/PageShell";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -31,17 +32,16 @@ const highlights = [
 
 export default function CrmIntegrationPage() {
   return (
-    <div className="flex justify-center px-4 py-12">
-      <div className="stagger w-full max-w-2xl space-y-6">
-        <IntegrationHero
-          icon={Database}
-          eyebrow="Integration"
-          title="Connect your CRM"
-          subtitle="Push every call to your CRM — contact, outcome, recording, transcript and sentiment."
-          highlights={highlights}
-        />
+    <PageShell width="narrow">
+      <IntegrationHero
+        icon={Database}
+        eyebrow="Integration"
+        title="Connect your CRM"
+        subtitle="Push every call to your CRM — contact, outcome, recording, transcript and sentiment."
+        highlights={highlights}
+      />
 
-        <Card>
+      <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <CardTitle className="text-h3">Connect your CRM</CardTitle>
@@ -62,7 +62,6 @@ export default function CrmIntegrationPage() {
             <CrmSection />
           </CardContent>
         </Card>
-      </div>
-    </div>
+    </PageShell>
   );
 }

@@ -12,6 +12,8 @@ import {
     updateCampaignApiV1CampaignCampaignIdPatch
 } from '@/client/sdk.gen';
 import type { CampaignResponse, UpdateCampaignRequest } from '@/client/types.gen';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { PageShell } from '@/components/layout/PageShell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -293,29 +295,29 @@ export default function EditCampaignPage() {
 
     if (isLoading) {
         return (
-            <div className="container mx-auto max-w-2xl space-y-6 px-4 py-10">
+            <PageShell width="narrow">
                 <div className="animate-pulse space-y-4">
                     <div className="h-8 w-1/3 rounded-lg bg-muted" />
                     <div className="h-64 rounded-2xl bg-muted/60" />
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     if (!campaign) {
         return (
-            <div className="container mx-auto max-w-2xl px-4 py-10">
+            <PageShell width="narrow">
                 <Card className="rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)]">
                     <CardContent className="p-12 text-center text-body text-muted-foreground">
                         Campaign not found
                     </CardContent>
                 </Card>
-            </div>
+            </PageShell>
         );
     }
 
     return (
-        <div className="container mx-auto max-w-2xl space-y-6 px-4 py-10 pb-12">
+        <PageShell width="narrow">
             <div>
                 <Button
                     variant="ghost"
@@ -325,9 +327,11 @@ export default function EditCampaignPage() {
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back to Campaign
                 </Button>
-                <p className="text-eyebrow text-primary">Edit Campaign</p>
-                <h1 className="mt-1 text-h1 text-foreground">Edit Campaign</h1>
-                <p className="mt-1 text-body text-muted-foreground">Modify campaign settings</p>
+                <PageHeader
+                    eyebrow="Edit Campaign"
+                    title="Edit Campaign"
+                    subtitle="Modify campaign settings"
+                />
             </div>
 
             <Card className="rounded-2xl border border-border/60 bg-card shadow-[var(--shadow-card)] transition-all duration-200">
@@ -416,6 +420,6 @@ export default function EditCampaignPage() {
                     </form>
                 </CardContent>
             </Card>
-        </div>
+        </PageShell>
     );
 }

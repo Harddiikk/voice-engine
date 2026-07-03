@@ -12,6 +12,8 @@ import {
 } from "@/client/sdk.gen";
 import type { CreateToolRequest, ToolResponse } from "@/client/types.gen";
 import { CredentialSelector } from "@/components/http";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { PageShell } from "@/components/layout/PageShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -284,37 +286,35 @@ export default function ToolsPage() {
 
     if (loading || !user) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
+            <PageShell width="wide">
                 <div className="space-y-4">
                     <Skeleton className="h-12 w-64" />
                     <Skeleton className="h-64 w-96" />
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     return (
-        <div className="min-h-screen">
-            <div className="container mx-auto px-4 py-8">
-                <div className="max-w-6xl mx-auto">
-                    <div className="mb-8">
-                        <p className="text-eyebrow text-primary">Workflows</p>
-                        <h1 className="text-h1 mt-1">Tools</h1>
-                        <p className="text-body mt-1 text-muted-foreground">
-                            Manage reusable tools that can be used across your workflows.{" "}
-                            <a href={TOOLS_INTRODUCTION_DOC_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline underline-offset-2 hover:text-foreground">
-                                Learn more <ExternalLink className="h-3 w-3" />
-                            </a>
-                        </p>
-                    </div>
+        <>
+        <PageShell width="wide">
+            <div>
+                <PageHeader eyebrow="Workflows" title="Tools" />
+                <p className="text-body mt-2 max-w-2xl text-muted-foreground">
+                    Manage reusable tools that can be used across your workflows.{" "}
+                    <a href={TOOLS_INTRODUCTION_DOC_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline underline-offset-2 hover:text-foreground">
+                        Learn more <ExternalLink className="h-3 w-3" />
+                    </a>
+                </p>
+            </div>
 
-                    {error && (
-                        <div className="mb-4 p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
-                            {error}
-                        </div>
-                    )}
+            {error && (
+                <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive">
+                    {error}
+                </div>
+            )}
 
-                    <Card className="mb-6">
+            <Card>
                         <CardHeader>
                             <div className="flex justify-between items-center">
                                 <div>
@@ -494,8 +494,7 @@ export default function ToolsPage() {
                             )}
                         </CardContent>
                     </Card>
-                </div>
-            </div>
+        </PageShell>
 
             {/* Create Tool Dialog */}
             <Dialog open={isCreateDialogOpen} onOpenChange={(open) => {
@@ -634,6 +633,6 @@ export default function ToolsPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </>
     );
 }

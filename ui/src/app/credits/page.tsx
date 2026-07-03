@@ -2,6 +2,7 @@ import { Activity, Coins, ShieldCheck, Wallet } from "lucide-react";
 
 import { CreditsSection } from "@/components/CreditsSection";
 import { IntegrationHero } from "@/components/integrations/IntegrationHero";
+import { PageShell } from "@/components/layout/PageShell";
 
 const highlights = [
   {
@@ -23,18 +24,16 @@ const highlights = [
 
 export default function CreditsPage() {
   return (
-    <div className="flex justify-center px-4 py-12">
-      <div className="stagger w-full max-w-2xl space-y-6">
-        <IntegrationHero
-          icon={Wallet}
-          eyebrow="Billing"
-          title="Credits & Billing"
-          subtitle="Track your plan, monitor remaining call credits, and top up in seconds with secure payments via PayU."
-          highlights={highlights}
-        />
+    <PageShell width="narrow">
+      <IntegrationHero
+        icon={Wallet}
+        eyebrow="Billing"
+        title="Credits & Billing"
+        subtitle="Track your plan, monitor remaining call credits, and top up in seconds with secure payments via PayU."
+        highlights={highlights}
+      />
 
-        <CreditsSection />
-      </div>
-    </div>
+      <CreditsSection />
+    </PageShell>
   );
 }
