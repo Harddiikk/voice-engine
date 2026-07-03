@@ -28,6 +28,7 @@ export { OrgConfigProvider as UserConfigProvider } from './OrgConfigContext';
 export interface PlanFeatures {
     api: boolean;
     mcp: boolean;
+    build_with_ai: boolean;
 }
 
 // SaaS-only state layered on top of upstream's OrgConfig context.
@@ -54,7 +55,7 @@ const INITIAL_SAAS_STATE: SaasUserState = {
     isSuperuser: false,
     superuserLoaded: false,
     plan: 'trial',
-    planFeatures: { api: false, mcp: false },
+    planFeatures: { api: false, mcp: false, build_with_ai: false },
     planLoaded: false,
     permissionsLoaded: false,
 };
@@ -111,7 +112,11 @@ function useSaasUserState(): SaasUserState {
                 setSaasState({
                     isSuperuser: !!data?.is_superuser,
                     plan: data?.plan ?? 'trial',
-                    planFeatures: { api: !!data?.features?.api, mcp: !!data?.features?.mcp },
+                    planFeatures: {
+                        api: !!data?.features?.api,
+                        mcp: !!data?.features?.mcp,
+                        build_with_ai: !!data?.features?.build_with_ai,
+                    },
                     superuserLoaded: true,
                     planLoaded: true,
                     permissionsLoaded: true,
@@ -120,7 +125,7 @@ function useSaasUserState(): SaasUserState {
                 setSaasState({
                     isSuperuser: false,
                     plan: 'trial',
-                    planFeatures: { api: false, mcp: false },
+                    planFeatures: { api: false, mcp: false, build_with_ai: false },
                     superuserLoaded: true,
                     planLoaded: true,
                     permissionsLoaded: true,

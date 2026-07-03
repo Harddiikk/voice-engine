@@ -132,7 +132,7 @@ def test_patch_profile_forwards_only_sent_fields():
     body = response.json()
     assert body["organization_id"] == 5
     assert body["plan"] == "growth"
-    assert body["features"] == {"api": True, "mcp": False}
+    assert body["features"] == {"api": True, "mcp": False, "build_with_ai": True}
     assert body["pricing"]["setup_fee_inr"] == 300
 
 
@@ -409,7 +409,7 @@ def test_client_detail_assembles_all_sections():
     assert body["owner_email"] == "jane@example.test"
     assert body["plan"] == "growth"
     assert body["plan_override"] == "growth"
-    assert body["features"] == {"api": True, "mcp": False}
+    assert body["features"] == {"api": True, "mcp": False, "build_with_ai": True}
     assert body["pricing"]["custom"]["per_minute_inr"] is True
     assert body["money"]["money_left_inr"] == 12.0
     assert body["kyc"]["status"] == "disabled"

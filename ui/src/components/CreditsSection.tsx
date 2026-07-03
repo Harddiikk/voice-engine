@@ -1,5 +1,6 @@
 "use client";
 
+import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -8,10 +9,12 @@ import { Button } from "@/components/ui/button";
 import { useLeadForms } from "@/context/LeadFormsContext";
 import { useAuth } from "@/lib/auth";
 import { BOOK_A_MEETING_URL } from "@/lib/brand";
+import { cn } from "@/lib/utils";
 
 interface PackFeatures {
   api: boolean;
   mcp: boolean;
+  build_with_ai?: boolean;
 }
 interface Pack {
   id: string;
@@ -20,6 +23,12 @@ interface Pack {
   price_inr: number;
   per_credit_inr?: number;
   features?: PackFeatures;
+  // Richer plan detail now returned by /billing/balance. Cast onto the
+  // generated Balance shape (client isn't regenerated).
+  max_agents?: number;
+  max_concurrent_calls?: number;
+  includes?: string[];
+  highlight?: boolean; // "Most popular"
 }
 interface Balance {
   balance_seconds: number | null;
@@ -156,17 +165,17 @@ export function CreditsSection() {
     (data.plan && data.plan !== "trial" ? data.plan : "Trial");
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-md border p-4">
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-[var(--shadow-card)]">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">Current balance</p>
+          <p className="text-small text-muted-foreground">Current balance</p>
           {!data.unlimited && (
             <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
               {planLabel} plan
             </span>
           )}
         </div>
-        <p className="text-2xl font-bold tabular">
+        <p className="mt-1 text-3xl font-semibold tabular text-foreground">
           {data.unlimited
             ? "Unlimited"
             : `${minutes?.toLocaleString()} credits`}
@@ -212,67 +221,124 @@ export function CreditsSection() {
           you&apos;ll be able to buy more minutes here.
         </p>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-3">
-          {data.packs.map((pack) => {
-            const isCurrent = pack.id === data.plan;
-            return (
-              <div
-                key={pack.id}
-                className={`relative flex flex-col justify-between rounded-xl border p-4 transition-shadow ${
-                  isCurrent
-                    ? "border-primary/50 shadow-[var(--shadow-card)]"
-                    : "hover:shadow-[var(--shadow-card)]"
-                }`}
-              >
-                {isCurrent && (
-                  <span className="absolute -top-2 right-3 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
-                    Current
-                  </span>
-                )}
-                <div>
-                  <p className="font-semibold">{pack.label}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {pack.minutes.toLocaleString()} credits
-                  </p>
-                  <p className="mt-2 text-lg font-bold tabular">
-                    ₹{pack.price_inr.toLocaleString()}
-                  </p>
-                  {pack.per_credit_inr != null && (
-                    <p className="text-xs text-muted-foreground">
-                      ₹{pack.per_credit_inr}/credit
-                    </p>
+        <div>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-label font-semibold text-foreground">
+              Top up your credits
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              Secure checkout via PayU
+            </span>
+          </div>
+          <div className="mt-3 grid items-stretch gap-4 sm:grid-cols-3">
+            {data.packs.map((pack) => {
+              const isCurrent = pack.id === data.plan;
+              const isHighlight = pack.highlight === true;
+              return (
+                <div
+                  key={pack.id}
+                  className={cn(
+                    "relative flex flex-col rounded-2xl border bg-card p-5 text-card-foreground shadow-[var(--shadow-card)] transition-[box-shadow,transform,border-color] duration-200 ease-[var(--ease-out)]",
+                    isHighlight
+                      ? "border-primary/50 ring-1 ring-primary/20 shadow-[var(--shadow-pop)]"
+                      : "border-border/60 hover:-translate-y-0.5 hover:shadow-[var(--shadow-pop)]",
                   )}
-                  {pack.features && (
-                    <ul className="mt-3 space-y-1 text-xs">
-                      <li className={pack.features.api ? "text-foreground" : "text-muted-foreground/50"}>
-                        {pack.features.api ? "✓" : "✕"} API access
-                      </li>
-                      <li className={pack.features.mcp ? "text-foreground" : "text-muted-foreground/50"}>
-                        {pack.features.mcp ? "✓" : "✕"} MCP server
-                      </li>
-                    </ul>
-                  )}
-                </div>
-                <Button
-                  className="mt-3"
-                  variant={isCurrent ? "outline" : "brand"}
-                  disabled={busy === pack.id}
-                  onClick={() => buy(pack)}
                 >
-                  {busy === pack.id
-                    ? "Opening..."
-                    : isCurrent
-                      ? "Add more"
-                      : "Choose plan"}
-                </Button>
-              </div>
-            );
-          })}
+                  {isHighlight && (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-primary px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground shadow-[var(--shadow-card)]">
+                      Most popular
+                    </span>
+                  )}
+                  <div className="flex flex-1 flex-col">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-label font-semibold text-foreground">
+                        {pack.label}
+                      </p>
+                      {isCurrent && (
+                        <span className="shrink-0 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                          Current
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-3 text-2xl font-semibold tabular text-foreground">
+                      ₹{pack.price_inr.toLocaleString("en-IN")}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground tabular">
+                      {pack.minutes.toLocaleString()} credits
+                      {pack.per_credit_inr != null &&
+                        ` · ₹${pack.per_credit_inr}/credit`}
+                    </p>
+
+                    {pack.includes && pack.includes.length > 0 ? (
+                      <ul className="mt-4 space-y-2 border-t border-border/60 pt-4 text-[13px] leading-snug">
+                        {pack.includes.map((item) => (
+                          <li
+                            key={item}
+                            className="flex items-start gap-2 text-muted-foreground"
+                          >
+                            <Check
+                              className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary"
+                              aria-hidden="true"
+                            />
+                            <span>{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      pack.features && (
+                        <ul className="mt-4 space-y-2 border-t border-border/60 pt-4 text-[13px]">
+                          {(
+                            [
+                              ["API access", pack.features.api],
+                              ["MCP server", pack.features.mcp],
+                            ] as const
+                          ).map(([featLabel, on]) => (
+                            <li
+                              key={featLabel}
+                              className={cn(
+                                "flex items-center gap-2",
+                                on
+                                  ? "text-muted-foreground"
+                                  : "text-muted-foreground/40 line-through",
+                              )}
+                            >
+                              <Check
+                                className={cn(
+                                  "h-3.5 w-3.5 shrink-0",
+                                  on ? "text-primary" : "text-muted-foreground/40",
+                                )}
+                                aria-hidden="true"
+                              />
+                              <span>{featLabel}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )
+                    )}
+                  </div>
+
+                  <Button
+                    className="mt-5 w-full"
+                    variant={isCurrent ? "outline" : "brand"}
+                    disabled={busy === pack.id}
+                    onClick={() => buy(pack)}
+                  >
+                    {busy === pack.id
+                      ? "Opening…"
+                      : isCurrent
+                        ? "Add more"
+                        : "Choose plan"}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
       {/* Enterprise — custom pricing / committed volume: contact + book a meeting */}
-      <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+      <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5 shadow-[var(--shadow-card)]">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="font-semibold">Enterprise</p>
@@ -311,7 +377,7 @@ export function CreditsSection() {
           bookkeeping pairs are collapsed behind a toggle; the net per-call
           charge row is what most users want to see. */}
       {!data.unlimited && ledger !== null && (
-        <div className="rounded-md border p-4">
+        <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-[var(--shadow-card)]">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-semibold">Billing history</p>
             <button

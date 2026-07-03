@@ -10,8 +10,11 @@ import {
 
 /**
  * Shared shell for a single self-serve integration/account page (Credits,
- * Phone Numbers, WhatsApp, CRM). Renders the page header + a titled card so
- * the existing Section components drop straight in.
+ * PayU test, …). Renders the page header and — when `cardTitle` is provided —
+ * wraps the children in a titled card so simple Section components drop
+ * straight in. Pages that already render their own cards (e.g. Credits) omit
+ * `cardTitle`/`cardDescription` and get the header + bare children instead, so
+ * the page heading isn't duplicated by the card title.
  */
 export function IntegrationPage({
   eyebrow,
@@ -24,12 +27,12 @@ export function IntegrationPage({
   eyebrow: string;
   title: string;
   subtitle?: string;
-  cardTitle: string;
-  cardDescription: ReactNode;
+  cardTitle?: string;
+  cardDescription?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <div className="flex justify-center px-4 py-12">
+    <div className="flex min-h-full justify-center px-4 pb-16 pt-10 sm:pt-14">
       <div className="stagger w-full max-w-2xl space-y-6">
         <div>
           <p className="text-eyebrow text-primary">{eyebrow}</p>
@@ -38,13 +41,19 @@ export function IntegrationPage({
             <p className="text-body mt-2 text-muted-foreground">{subtitle}</p>
           )}
         </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>{cardTitle}</CardTitle>
-            <CardDescription>{cardDescription}</CardDescription>
-          </CardHeader>
-          <CardContent>{children}</CardContent>
-        </Card>
+        {cardTitle ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>{cardTitle}</CardTitle>
+              {cardDescription && (
+                <CardDescription>{cardDescription}</CardDescription>
+              )}
+            </CardHeader>
+            <CardContent>{children}</CardContent>
+          </Card>
+        ) : (
+          children
+        )}
       </div>
     </div>
   );

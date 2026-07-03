@@ -83,7 +83,7 @@ type SidebarNavItem = {
   /** Only visible to superusers (deployment owner; stricter than adminOnly). */
   superuserOnly?: boolean;
   /** Only visible if the org's plan includes this feature (superuser always). */
-  requiresFeature?: "api" | "mcp";
+  requiresFeature?: "api" | "mcp" | "build_with_ai";
 };
 
 type SidebarNavSection = {
@@ -117,6 +117,7 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Build with AI",
         url: "/agent-builder",
         icon: Sparkles,
+        requiresFeature: "build_with_ai",
       },
       {
         title: "Voice Agents",
