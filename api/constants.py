@@ -112,7 +112,17 @@ CREDIT_PACKS = [
         "minutes": 300,
         "price_inr": 2399,
         "per_credit_inr": 8,
-        "features": {"api": False, "mcp": False},
+        # build_with_ai (the prompt-to-agent builder) is Growth+ only.
+        "features": {"api": False, "mcp": False, "build_with_ai": False},
+        "max_agents": 2,
+        "max_concurrent_calls": 3,
+        "includes": [
+            "300 call credits (minutes)",
+            "Up to 2 voice agents",
+            "3 concurrent calls",
+            "Campaigns, telephony & voicemail detection",
+            "Email support",
+        ],
     },
     {
         "id": "growth",
@@ -120,7 +130,18 @@ CREDIT_PACKS = [
         "minutes": 650,
         "price_inr": 4500,
         "per_credit_inr": 6,
-        "features": {"api": True, "mcp": False},
+        "features": {"api": True, "mcp": False, "build_with_ai": True},
+        "max_agents": 10,
+        "max_concurrent_calls": 10,
+        "highlight": True,  # "Most popular"
+        "includes": [
+            "650 call credits (minutes)",
+            "Up to 10 voice agents",
+            "10 concurrent calls",
+            "Build with AI (prompt-to-agent)",
+            "REST API access",
+            "Priority support",
+        ],
     },
     {
         "id": "scale",
@@ -128,7 +149,17 @@ CREDIT_PACKS = [
         "minutes": 2000,
         "price_inr": 10000,
         "per_credit_inr": 5,
-        "features": {"api": True, "mcp": True},
+        "features": {"api": True, "mcp": True, "build_with_ai": True},
+        "max_agents": 50,
+        "max_concurrent_calls": 25,
+        "includes": [
+            "2,000 call credits (minutes)",
+            "Up to 50 voice agents",
+            "25 concurrent calls",
+            "Build with AI (prompt-to-agent)",
+            "REST API + MCP server",
+            "Priority support & SLAs",
+        ],
     },
 ]
 

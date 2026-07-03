@@ -26,17 +26,24 @@ PLAN_RANK = {TRIAL_PLAN: 0, "starter": 1, "growth": 2, "scale": 3, ENTERPRISE_PL
 # trial + enterprise).
 ASSIGNABLE_PLANS = (TRIAL_PLAN, "starter", "growth", "scale", ENTERPRISE_PLAN)
 
-_DEFAULT_FEATURES = {"api": False, "mcp": False}
+_DEFAULT_FEATURES = {"api": False, "mcp": False, "build_with_ai": False}
 
 
 def features_for_plan(plan: str) -> dict:
-    """The feature flags for a plan tier. Trial / unknown tiers get nothing."""
+    """The feature flags for a plan tier. Trial / unknown tiers get nothing.
+
+    build_with_ai (the prompt-to-agent builder) is Growth+ / Enterprise only.
+    """
     if plan == ENTERPRISE_PLAN:
-        return {"api": True, "mcp": True}
+        return {"api": True, "mcp": True, "build_with_ai": True}
     pack = next((p for p in CREDIT_PACKS if p["id"] == plan), None)
     feats = pack.get("features") if pack else None
     if isinstance(feats, dict):
-        return {"api": bool(feats.get("api")), "mcp": bool(feats.get("mcp"))}
+        return {
+            "api": bool(feats.get("api")),
+            "mcp": bool(feats.get("mcp")),
+            "build_with_ai": bool(feats.get("build_with_ai")),
+        }
     return dict(_DEFAULT_FEATURES)
 
 
