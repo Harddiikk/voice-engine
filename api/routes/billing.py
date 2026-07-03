@@ -72,6 +72,7 @@ async def get_balance(user: UserModel = Depends(get_user)):
         "per_minute_inr": money["per_minute_inr"],
         "money_left_inr": money["money_left_inr"],
         "money_spent_inr": money["money_spent_inr"],
+        "money_spent_today_inr": money["money_spent_today_inr"],
     }
 
 
