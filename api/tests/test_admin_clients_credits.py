@@ -298,9 +298,68 @@ def test_set_credits_validates_minutes_bounds():
     client = TestClient(app)
 
     # 0 is allowed for set (unlike grant); negatives and over-cap are rejected.
-    for bad_body in ({"minutes": -1}, {"minutes": 100_001}, {}):
+    # {} (neither field) and both-fields are also invalid (exactly-one rule).
+    for bad_body in (
+        {"minutes": -1},
+        {"minutes": 100_001},
+        {},
+        {"minutes": 10, "rupees": 80},
+    ):
         response = client.post("/admin/clients/5/set-credits", json=bad_body)
         assert response.status_code == 422, bad_body
+
+
+def test_set_credits_by_rupees_converts_at_per_minute_rate():
+    """₹ is converted to credit-seconds server-side at the org's rate."""
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch(
+            "api.routes.admin_clients.get_org_pricing",
+            new=AsyncMock(return_value={"per_minute_inr": 8.0}),
+        ),
+        patch("api.routes.admin_clients.record_admin_action", new=AsyncMock()),
+    ):
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(free_call_seconds_remaining=540_000)
+        )
+        db.set_credits_tx = AsyncMock(return_value=36_000)
+
+        # ₹4800 at ₹8/min = 600 min = 36000s.
+        response = client.post(
+            "/admin/clients/5/set-credits", json={"rupees": 4800}
+        )
+
+    assert response.status_code == 200
+    args = db.set_credits_tx.await_args
+    assert args.args[0] == 5 and args.args[1] == 36_000  # org, target seconds
+    assert response.json()["credits_seconds_remaining"] == 36_000
+
+
+def test_set_credits_by_rupees_400_when_rate_is_zero():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch(
+            "api.routes.admin_clients.get_org_pricing",
+            new=AsyncMock(return_value={"per_minute_inr": 0.0}),
+        ),
+    ):
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(free_call_seconds_remaining=540_000)
+        )
+        db.set_credits_tx = AsyncMock()
+
+        response = client.post(
+            "/admin/clients/5/set-credits", json={"rupees": 4800}
+        )
+
+    assert response.status_code == 400
+    db.set_credits_tx.assert_not_awaited()
 
 
 # ======== CREDITS IN LIST ========

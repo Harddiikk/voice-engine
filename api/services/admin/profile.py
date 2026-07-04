@@ -46,6 +46,7 @@ async def update_admin_profile(
     number_price_inr: Any = _UNSET,
     setup_fee_inr: Any = _UNSET,
     suspended: Any = _UNSET,
+    show_dograh_voice: Any = _UNSET,
 ) -> dict:
     """Partial update — only the passed fields change. Pass ``None`` to clear a
     pricing/plan override back to the default; omit to leave unchanged."""
@@ -59,6 +60,8 @@ async def update_admin_profile(
             profile.pop("plan_override", None)
     if suspended is not _UNSET:
         profile["suspended"] = bool(suspended)
+    if show_dograh_voice is not _UNSET:
+        profile["show_dograh_voice"] = bool(show_dograh_voice)
     for key, val in (
         ("per_minute_inr", per_minute_inr),
         ("number_price_inr", number_price_inr),

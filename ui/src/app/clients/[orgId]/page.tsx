@@ -73,6 +73,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Tabs,
   TabsContent,
@@ -155,9 +156,16 @@ export default function ClientDetailPage() {
   const [grantOpen, setGrantOpen] = useState(false);
   const [grantMinutes, setGrantMinutes] = useState("");
 
-  // Set balance dialog (sets the exact balance, up or down)
+  // Set balance dialog (sets the exact balance, up or down; by ₹ or minutes)
   const [setBalOpen, setSetBalOpen] = useState(false);
   const [setBalMinutes, setSetBalMinutes] = useState("");
+  const [setBalRupees, setSetBalRupees] = useState("");
+  const [setBalSource, setSetBalSource] = useState<"minutes" | "rupees">(
+    "minutes",
+  );
+
+  // Show-Dograh-voice toggle (per-client; default = Gemini voices only)
+  const [savingDograhToggle, setSavingDograhToggle] = useState(false);
 
   // Pricing form
   const [perMinute, setPerMinute] = useState("");
@@ -305,29 +313,77 @@ export default function ClientDetailPage() {
     }
   };
 
-  const setBalMinutesNumber = Number(setBalMinutes);
-  const setBalMinutesValid =
-    setBalMinutes.trim() !== "" &&
-    Number.isInteger(setBalMinutesNumber) &&
-    setBalMinutesNumber >= 0 &&
-    setBalMinutesNumber <= 100000;
+  // Per-minute rate for the ₹⇄minutes conversion (0/absent = ₹ input disabled).
+  const setBalRate = detail?.money?.per_minute_inr ?? 0;
+
+  // Linked inputs: editing one derives the other via the rate. The last-edited
+  // field is the "source" sent to the backend (server does the authoritative
+  // conversion for ₹).
+  const onSetBalMinutesChange = (v: string) => {
+    setSetBalSource("minutes");
+    setSetBalMinutes(v);
+    const n = Number(v);
+    if (v.trim() === "") setSetBalRupees("");
+    else if (setBalRate > 0 && Number.isFinite(n))
+      setSetBalRupees(String(Math.round(n * setBalRate * 100) / 100));
+  };
+  const onSetBalRupeesChange = (v: string) => {
+    setSetBalSource("rupees");
+    setSetBalRupees(v);
+    const n = Number(v);
+    if (v.trim() === "") setSetBalMinutes("");
+    else if (setBalRate > 0 && Number.isFinite(n))
+      setSetBalMinutes(String(Math.round(n / setBalRate)));
+  };
+
+  const setBalValid =
+    setBalSource === "rupees"
+      ? setBalRupees.trim() !== "" &&
+        Number.isFinite(Number(setBalRupees)) &&
+        Number(setBalRupees) >= 0 &&
+        Number(setBalRupees) <= 10_000_000
+      : setBalMinutes.trim() !== "" &&
+        Number.isInteger(Number(setBalMinutes)) &&
+        Number(setBalMinutes) >= 0 &&
+        Number(setBalMinutes) <= 100_000;
 
   const onSetCredits = async () => {
-    if (!setBalMinutesValid) return;
+    if (!setBalValid) return;
     setSubmitting(true);
     try {
       const token = await getToken();
-      const result = await setClientCredits(token, orgId, setBalMinutesNumber);
-      toast.success(
-        `Balance set to ${setBalMinutesNumber} minute${setBalMinutesNumber === 1 ? "" : "s"} — now ${formatCredits(result.credits_seconds_remaining)}`,
-      );
+      const amount =
+        setBalSource === "rupees"
+          ? { rupees: Number(setBalRupees) }
+          : { minutes: Number(setBalMinutes) };
+      const result = await setClientCredits(token, orgId, amount);
+      toast.success(`Balance set — now ${formatCredits(result.credits_seconds_remaining)}`);
       setSetBalOpen(false);
       setSetBalMinutes("");
+      setSetBalRupees("");
       await fetchAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to set balance");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const onToggleDograhVoice = async (show: boolean) => {
+    setSavingDograhToggle(true);
+    try {
+      const token = await getToken();
+      await updateAdminProfile(token, orgId, { show_dograh_voice: show });
+      toast.success(
+        show
+          ? "Dograh voice enabled for this client"
+          : "Dograh voice hidden — Gemini voices only",
+      );
+      await fetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update voice option");
+    } finally {
+      setSavingDograhToggle(false);
     }
   };
 
@@ -855,11 +911,19 @@ export default function ClientDetailPage() {
                         <Button
                           variant="outline"
                           onClick={() => {
-                            const currentMinutes =
+                            setSetBalSource("minutes");
+                            setSetBalMinutes(
                               money?.balance_seconds != null
-                                ? String(Math.floor(money.balance_seconds / 60))
-                                : "";
-                            setSetBalMinutes(currentMinutes);
+                                ? String(
+                                    Math.floor(money.balance_seconds / 60),
+                                  )
+                                : "",
+                            );
+                            setSetBalRupees(
+                              money?.money_left_inr != null
+                                ? String(money.money_left_inr)
+                                : "",
+                            );
                             setSetBalOpen(true);
                           }}
                           disabled={moneyUnlimited}
@@ -908,6 +972,35 @@ export default function ClientDetailPage() {
                       <p className="text-xs text-muted-foreground">
                         Selecting a plan sets a per-client override; choose
                         &ldquo;Derived&rdquo; to clear it.
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Voice options</CardTitle>
+                      <CardDescription>
+                        By default clients see only the Gemini voices in the
+                        model/voice editor. Turn this on to also show the Dograh
+                        managed voice + BYOK for this client.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex items-center justify-between gap-4">
+                        <Label htmlFor="show-dograh-voice" className="text-sm">
+                          Show Dograh voice
+                        </Label>
+                        <Switch
+                          id="show-dograh-voice"
+                          checked={detail.show_dograh_voice === true}
+                          onCheckedChange={onToggleDograhVoice}
+                          disabled={savingDograhToggle}
+                        />
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {detail.show_dograh_voice
+                          ? "This client sees Gemini + Dograh + BYOK."
+                          : "This client sees Gemini voices only (all plans)."}
                       </p>
                     </CardContent>
                   </Card>
@@ -1305,28 +1398,54 @@ export default function ClientDetailPage() {
           <DialogHeader>
             <DialogTitle>Set balance</DialogTitle>
             <DialogDescription>
-              Sets {detail?.owner_email ?? "this organization"}&apos;s credit
-              balance to an exact value (1 credit = 1 minute). Use this to
-              correct the balance up or down — e.g. 9,000 → 6,000. Enter 0 to
-              zero it.
+              Sets {detail?.owner_email ?? "this organization"}&apos;s balance to
+              an exact value — by money (₹) or minutes. Editing one updates the
+              other at {setBalRate > 0 ? `₹${setBalRate}/min` : "the client rate"}.
+              Corrects up or down (e.g. 9,000 → 6,000); 0 zeroes it.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="detail-setbal-minutes">Minutes</Label>
-            <Input
-              id="detail-setbal-minutes"
-              type="number"
-              min={0}
-              max={100000}
-              step={1}
-              value={setBalMinutes}
-              onChange={(e) => setSetBalMinutes(e.target.value)}
-              placeholder="e.g. 6000"
-            />
-            <p className="text-xs text-muted-foreground">
-              Current balance: {formatCredits(money?.balance_seconds)}
-            </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="detail-setbal-rupees">Money (₹)</Label>
+              <Input
+                id="detail-setbal-rupees"
+                type="number"
+                min={0}
+                step="any"
+                value={setBalRupees}
+                onChange={(e) => onSetBalRupeesChange(e.target.value)}
+                placeholder="e.g. 48000"
+                disabled={setBalRate <= 0}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="detail-setbal-minutes">Minutes</Label>
+              <Input
+                id="detail-setbal-minutes"
+                type="number"
+                min={0}
+                max={100000}
+                step={1}
+                value={setBalMinutes}
+                onChange={(e) => onSetBalMinutesChange(e.target.value)}
+                placeholder="e.g. 6000"
+              />
+            </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {setBalMinutes.trim() !== "" && setBalRate > 0 ? (
+              <>
+                {Number(setBalMinutes)} min = {formatInr(Number(setBalRupees))} ·{" "}
+              </>
+            ) : null}
+            Current balance: {formatCredits(money?.balance_seconds)}
+            {money?.money_left_inr != null
+              ? ` (${formatInr(money.money_left_inr)})`
+              : ""}
+            {setBalRate <= 0
+              ? " — no per-minute rate set, use minutes"
+              : ""}
+          </p>
           <DialogFooter>
             <Button
               variant="outline"
@@ -1335,10 +1454,7 @@ export default function ClientDetailPage() {
             >
               Cancel
             </Button>
-            <Button
-              onClick={onSetCredits}
-              disabled={submitting || !setBalMinutesValid}
-            >
+            <Button onClick={onSetCredits} disabled={submitting || !setBalValid}>
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Set balance
             </Button>

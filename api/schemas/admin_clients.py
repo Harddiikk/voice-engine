@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from api.schemas.kyc import KycStatusResponse
 from api.services.plans import ASSIGNABLE_PLANS
@@ -136,18 +136,33 @@ class GrantCreditsResponse(BaseModel):
 
 
 class SetCreditsRequest(BaseModel):
-    """Set a metered org's call-credits balance to an exact value.
+    """Set a metered org's call-credits balance to an exact value — by minutes
+    OR rupees.
 
     Unlike a grant (which adds), this pins the balance — used to correct it up
-    or down (e.g. 9000 -> 6000 minutes). ``0`` zeroes the balance.
+    or down (e.g. 9000 -> 6000 minutes). Provide **exactly one** of ``minutes``
+    or ``rupees``; rupees is converted to credit-seconds server-side at the
+    org's effective per-minute rate. ``0`` zeroes the balance.
     """
 
-    minutes: int = Field(
-        ...,
+    minutes: Optional[int] = Field(
+        default=None,
         ge=0,
         le=100_000,
-        description="Exact minutes of call credit the org should have (converted to seconds).",
+        description="Exact minutes of call credit the org should have.",
     )
+    rupees: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=10_000_000,
+        description="Exact ₹ balance the org should have (converted at its per-minute rate).",
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "SetCreditsRequest":
+        if (self.minutes is None) == (self.rupees is None):
+            raise ValueError("Provide exactly one of minutes or rupees")
+        return self
 
 
 class SetCreditsResponse(BaseModel):
@@ -272,6 +287,9 @@ class AdminClientDetailResponse(BaseModel):
     pricing: AdminPricing
     money: AdminMoney
     suspended: bool = False
+    # When True the client also sees the Dograh managed voice + BYOK in the
+    # model/voice editor; default False = Gemini voices only (all plans).
+    show_dograh_voice: bool = False
     notes: List[AdminNote] = Field(default_factory=list)
     kyc: AdminKycStatusResponse
     # Omitted (null) if the usage rollup could not be computed.
@@ -287,6 +305,9 @@ class AdminProfileUpdateRequest(BaseModel):
     number_price_inr: Optional[int] = Field(default=None, ge=0)
     setup_fee_inr: Optional[int] = Field(default=None, ge=0)
     suspended: Optional[bool] = None
+    # True = also show the Dograh managed voice + BYOK for this client;
+    # False (default) = Gemini voices only.
+    show_dograh_voice: Optional[bool] = None
 
     @field_validator("plan_override")
     @classmethod
@@ -307,6 +328,7 @@ class AdminProfileResponse(BaseModel):
     features: Dict[str, bool] = Field(default_factory=dict)
     pricing: AdminPricing
     suspended: bool = False
+    show_dograh_voice: bool = False
 
 
 class AddNoteRequest(BaseModel):

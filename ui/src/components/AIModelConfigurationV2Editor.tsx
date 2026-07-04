@@ -18,7 +18,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { VoiceSelectorModal } from "@/components/VoiceSelectorModal";
 import { LANGUAGE_DISPLAY_NAMES } from "@/constants/languages";
-import { useUserConfig } from "@/context/UserConfigContext";
 import { BRAND } from "@/lib/brand";
 
 // Google/Gemini provider keys (realtime + LLM): google, google_realtime,
@@ -50,6 +49,10 @@ interface DograhDefaults {
 }
 
 export interface ModelConfigurationDefaultsV2 {
+    // When true, this org is limited to Gemini (speech-to-speech) voices — the
+    // Dograh managed voice + BYOK tabs are hidden and realtime/LLM providers are
+    // Google-only. Set per-client by the admin ("Show Dograh voice" toggle).
+    gemini_only?: boolean;
     dograh: DograhDefaults;
     byok: {
         pipeline: ServiceConfigurationDefaults;
@@ -278,10 +281,11 @@ export function AIModelConfigurationV2Editor({
     onSave,
     submitLabel = "Save Configuration",
 }: AIModelConfigurationV2EditorProps) {
-    const { plan, isSuperuser, planLoaded } = useUserConfig();
-    // Trial orgs are limited to Gemini (speech-to-speech) voices only — no
-    // Dograh managed voice, no BYOK. Superusers are exempt.
-    const geminiOnly = planLoaded && plan === "trial" && !isSuperuser;
+    // The backend decides the voice policy per-org (default: Gemini only for
+    // every client on every plan; the admin "Show Dograh voice" toggle flips
+    // it, and superusers always get everything). When gemini-only, hide the
+    // Dograh + BYOK tabs and restrict realtime/LLM providers to Gemini.
+    const geminiOnly = defaults.gemini_only === true;
 
     const defaultsForByok = useMemo(() => byokDefaults(defaults), [defaults]);
     // For trial (geminiOnly) orgs, restrict the realtime tab's realtime + LLM

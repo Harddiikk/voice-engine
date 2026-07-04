@@ -532,12 +532,37 @@ async def set_credits(
             ),
         )
 
-    target_seconds = request.minutes * 60
+    # The balance can be set by minutes or by rupees. Rupees is converted to
+    # credit-seconds at the org's effective per-minute rate (server-side, so the
+    # money math is authoritative and never drifts from the UI).
+    if request.rupees is not None:
+        pricing = await get_org_pricing(org_id)
+        rate = pricing["per_minute_inr"]
+        if rate <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Per-minute rate is zero; cannot set a balance by rupees.",
+            )
+        target_seconds = int(round(request.rupees / rate * 60))
+        description = (
+            f"Admin set balance: ₹{request.rupees:g} "
+            f"(~{target_seconds // 60} min @ ₹{rate:g}/min)"
+        )
+        audit_detail = {
+            "rupees": request.rupees,
+            "per_minute_inr": rate,
+            "seconds": target_seconds,
+        }
+    else:
+        target_seconds = request.minutes * 60
+        description = f"Admin set balance: {request.minutes} minutes"
+        audit_detail = {"minutes": request.minutes, "seconds": target_seconds}
+
     new_balance = await db_client.set_credits_tx(
         org_id,
         target_seconds,
         created_by=user.id,
-        description=f"Admin set balance: {request.minutes} minutes",
+        description=description,
     )
     if new_balance is None:
         raise HTTPException(
@@ -552,11 +577,11 @@ async def set_credits(
         actor_user_id=user.id,
         target_organization_id=org_id,
         action="set_credits",
-        detail={"minutes": request.minutes, "seconds": target_seconds},
+        detail=audit_detail,
     )
     logger.info(
-        f"Superuser {user.id} set org {org_id} balance to "
-        f"{request.minutes} minutes ({target_seconds}s); balance now {new_balance}s"
+        f"Superuser {user.id} set org {org_id} balance to {target_seconds}s "
+        f"({description}); balance now {new_balance}s"
     )
     return SetCreditsResponse(
         organization_id=org_id,
@@ -778,6 +803,7 @@ async def get_client_detail(
         pricing=AdminPricing(**pricing),
         money=AdminMoney(**money),
         suspended=bool(profile.get("suspended")),
+        show_dograh_voice=bool(profile.get("show_dograh_voice")),
         notes=list(profile.get("notes") or []),
         kyc=kyc,
         usage=usage,
@@ -825,6 +851,7 @@ async def update_client_profile(
         features=features_for_plan(plan),
         pricing=AdminPricing(**pricing),
         suspended=bool(profile.get("suspended")),
+        show_dograh_voice=bool(profile.get("show_dograh_voice")),
     )
 
 

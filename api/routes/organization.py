@@ -76,8 +76,8 @@ from api.services.configuration.registry import (
     ServiceProviders,
     ServiceType,
 )
+from api.services.admin.profile import get_admin_profile
 from api.services.mps_billing import ensure_hosted_mps_billing_account_v2
-from api.services.plans import TRIAL_PLAN, get_org_plan
 from api.services.organization_context import (
     OrganizationContextResponse,
     get_organization_context,
@@ -334,14 +334,18 @@ async def get_model_configuration_v2_defaults(
         },
     }
 
-    # Trial orgs are limited to Gemini (speech-to-speech) voices only — no
-    # Dograh managed voice, no BYOK pipeline, realtime/LLM providers restricted
-    # to Google/Gemini. Superusers are exempt. The frontend hides the other
-    # tabs; this keeps the served realtime options Gemini-only too.
+    # Voice policy: by default EVERY client (all plans) is limited to Gemini
+    # (speech-to-speech) voices — no Dograh managed voice, no BYOK. An admin can
+    # re-enable the Dograh voice per client via the ADMIN_PROFILE
+    # ``show_dograh_voice`` flag. Superusers always see everything (so the owner
+    # can configure). ``gemini_only`` tells the frontend which tabs to hide.
+    gemini_only = False
     if not user.is_superuser:
-        plan = await get_org_plan(user.selected_organization_id)
-        if plan == TRIAL_PLAN:
-            payload = _restrict_realtime_defaults_to_gemini(payload)
+        profile = await get_admin_profile(user.selected_organization_id)
+        gemini_only = not bool(profile.get("show_dograh_voice"))
+    payload["gemini_only"] = gemini_only
+    if gemini_only:
+        payload = _restrict_realtime_defaults_to_gemini(payload)
 
     return payload
 

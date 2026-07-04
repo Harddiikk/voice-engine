@@ -102,6 +102,9 @@ export interface AdminClientDetail {
   pricing?: AdminClientPricing | null;
   money?: AdminClientMoney | null;
   suspended?: boolean;
+  // When true, this client also sees the Dograh managed voice + BYOK in the
+  // model/voice editor; default false = Gemini voices only.
+  show_dograh_voice?: boolean;
   notes?: AdminClientNote[] | null;
   voicelink?: AdminClientVoiceLink | null;
   kyc?: AdminClientKycStatus | null;
@@ -117,6 +120,7 @@ export interface AdminProfilePatch {
   number_price_inr?: number | null;
   setup_fee_inr?: number | null;
   suspended?: boolean;
+  show_dograh_voice?: boolean;
 }
 
 export interface ChargeSetupFeeResult {
@@ -318,15 +322,16 @@ export const grantCreditsToClient = (
   });
 
 // Set the org's balance to an EXACT value (up or down), unlike grant which
-// only adds. `minutes` may be 0 to zero the balance.
+// only adds. Pass exactly one of `minutes` or `rupees`; rupees is converted to
+// credits server-side at the client's per-minute rate. `minutes: 0` zeroes it.
 export const setClientCredits = (
   token: string,
   organizationId: number,
-  minutes: number,
+  amount: { minutes: number } | { rupees: number },
 ) =>
   adminFetch<SetCreditsResult>(token, `/${organizationId}/set-credits`, {
     method: "POST",
-    body: JSON.stringify({ minutes }),
+    body: JSON.stringify(amount),
   });
 
 export const getClientKycStatus = (token: string, organizationId: number) =>
