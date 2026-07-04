@@ -105,6 +105,9 @@ export interface AdminClientDetail {
   // When true, this client also sees the Dograh managed voice + BYOK in the
   // model/voice editor; default false = Gemini voices only.
   show_dograh_voice?: boolean;
+  // True when a per-client Gemini key override is set (key itself never sent);
+  // false = client uses the shared platform Gemini key.
+  has_gemini_key?: boolean;
   notes?: AdminClientNote[] | null;
   voicelink?: AdminClientVoiceLink | null;
   kyc?: AdminClientKycStatus | null;
@@ -121,6 +124,8 @@ export interface AdminProfilePatch {
   setup_fee_inr?: number | null;
   suspended?: boolean;
   show_dograh_voice?: boolean;
+  // Per-client Gemini key override; "" clears it back to the platform key.
+  gemini_api_key?: string;
 }
 
 export interface ChargeSetupFeeResult {

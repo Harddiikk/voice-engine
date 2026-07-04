@@ -804,6 +804,7 @@ async def get_client_detail(
         money=AdminMoney(**money),
         suspended=bool(profile.get("suspended")),
         show_dograh_voice=bool(profile.get("show_dograh_voice")),
+        has_gemini_key=bool(profile.get("gemini_api_key")),
         notes=list(profile.get("notes") or []),
         kyc=kyc,
         usage=usage,
@@ -852,6 +853,7 @@ async def update_client_profile(
         pricing=AdminPricing(**pricing),
         suspended=bool(profile.get("suspended")),
         show_dograh_voice=bool(profile.get("show_dograh_voice")),
+        has_gemini_key=bool(profile.get("gemini_api_key")),
     )
 
 

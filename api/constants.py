@@ -55,6 +55,13 @@ GOOGLE_REDIRECT_URI = os.getenv(
     "GOOGLE_REDIRECT_URI", "https://api.auto4you.in/api/v1/auth/google/callback"
 )
 
+# Shared platform Gemini (Google AI Studio) API key. When set, every
+# "Gemini-only" org (the default voice policy) gets a managed google_realtime
+# config using this key — clients never type a key. A per-client key set in the
+# admin panel (ADMIN_PROFILE.gemini_api_key) overrides this. Unset ("" -> None)
+# = no managed Gemini (orgs fall back to their own saved/legacy config).
+PLATFORM_GEMINI_API_KEY = os.getenv("PLATFORM_GEMINI_API_KEY", "").strip() or None
+
 # Rate limits (requests per 60s). Set any to 0 to disable that limiter.
 # login/signup are IP-keyed (signup also provisions a VoiceLink client, so it's
 # stricter); the public X-API-Key call-trigger surface is keyed per API key and

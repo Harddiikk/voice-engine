@@ -290,6 +290,9 @@ class AdminClientDetailResponse(BaseModel):
     # When True the client also sees the Dograh managed voice + BYOK in the
     # model/voice editor; default False = Gemini voices only (all plans).
     show_dograh_voice: bool = False
+    # True when a per-client Gemini key override is set (the key itself is never
+    # returned); False = this client uses the shared platform Gemini key.
+    has_gemini_key: bool = False
     notes: List[AdminNote] = Field(default_factory=list)
     kyc: AdminKycStatusResponse
     # Omitted (null) if the usage rollup could not be computed.
@@ -308,6 +311,9 @@ class AdminProfileUpdateRequest(BaseModel):
     # True = also show the Dograh managed voice + BYOK for this client;
     # False (default) = Gemini voices only.
     show_dograh_voice: Optional[bool] = None
+    # Per-client Gemini API key override (overrides the shared platform key);
+    # empty string clears it back to the platform key. Never returned.
+    gemini_api_key: Optional[str] = None
 
     @field_validator("plan_override")
     @classmethod
@@ -329,6 +335,7 @@ class AdminProfileResponse(BaseModel):
     pricing: AdminPricing
     suspended: bool = False
     show_dograh_voice: bool = False
+    has_gemini_key: bool = False
 
 
 class AddNoteRequest(BaseModel):

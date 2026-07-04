@@ -47,6 +47,7 @@ async def update_admin_profile(
     setup_fee_inr: Any = _UNSET,
     suspended: Any = _UNSET,
     show_dograh_voice: Any = _UNSET,
+    gemini_api_key: Any = _UNSET,
 ) -> dict:
     """Partial update — only the passed fields change. Pass ``None`` to clear a
     pricing/plan override back to the default; omit to leave unchanged."""
@@ -62,6 +63,14 @@ async def update_admin_profile(
         profile["suspended"] = bool(suspended)
     if show_dograh_voice is not _UNSET:
         profile["show_dograh_voice"] = bool(show_dograh_voice)
+    if gemini_api_key is not _UNSET:
+        # Per-client Gemini key override (overrides the shared platform key).
+        # Empty/None clears it back to the platform key.
+        key = (gemini_api_key or "").strip() if gemini_api_key else ""
+        if key:
+            profile["gemini_api_key"] = key
+        else:
+            profile.pop("gemini_api_key", None)
     for key, val in (
         ("per_minute_inr", per_minute_inr),
         ("number_price_inr", number_price_inr),

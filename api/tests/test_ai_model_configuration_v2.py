@@ -679,3 +679,148 @@ async def test_migrate_model_configuration_v2_initializes_hosted_mps_billing(
     )
     sync_posthog_billing.assert_called_once_with(42, uses_mps_billing_v2=True)
     assert response == expected_response
+
+
+# ======== Managed Gemini (shared platform key) synthesis ========
+
+
+def _config_reader(*, model_config_value=None, profile_value=None):
+    """AsyncMock side_effect for db_client.get_configuration(org_id, key):
+    returns the model-config v2 row for its key and the admin-profile row for
+    its key, based on the key argument."""
+    from api.enums import OrganizationConfigurationKey
+
+    async def _read(_org_id, key):
+        if key == OrganizationConfigurationKey.MODEL_CONFIGURATION_V2.value:
+            return (
+                SimpleNamespace(value=model_config_value)
+                if model_config_value is not None
+                else None
+            )
+        if key == OrganizationConfigurationKey.ADMIN_PROFILE.value:
+            return SimpleNamespace(value=profile_value or {})
+        return None
+
+    return _read
+
+
+@pytest.mark.asyncio
+async def test_managed_gemini_synthesized_for_gemini_only_org_with_platform_key(
+    monkeypatch,
+):
+    # No saved model config, empty admin profile (=> gemini-only), platform key set.
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(side_effect=_config_reader(profile_value={})),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", "shared-gemini-key"
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is True
+    assert resolved.source == "organization_v2"
+    assert resolved.effective.is_realtime is True
+    assert resolved.effective.realtime.provider.value == "google_realtime"
+    assert resolved.effective.realtime.api_key == "shared-gemini-key"
+    assert resolved.effective.llm.api_key == "shared-gemini-key"
+
+
+@pytest.mark.asyncio
+async def test_managed_gemini_per_client_key_overrides_platform_key(monkeypatch):
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(
+            side_effect=_config_reader(profile_value={"gemini_api_key": "client-key"})
+        ),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", "shared-gemini-key"
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is True
+    assert resolved.effective.realtime.api_key == "client-key"
+
+
+@pytest.mark.asyncio
+async def test_no_managed_gemini_when_no_key_available(monkeypatch):
+    # No platform key, no per-client key => never synthesize (safe no-op).
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(side_effect=_config_reader(profile_value={})),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", None
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_user_configurations",
+        AsyncMock(return_value=EffectiveAIModelConfiguration()),
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is False
+    assert resolved.source == "empty"
+
+
+@pytest.mark.asyncio
+async def test_no_managed_gemini_when_show_dograh_voice_enabled(monkeypatch):
+    # Admin turned Dograh back on => org is NOT gemini-only => no synthesis.
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(
+            side_effect=_config_reader(profile_value={"show_dograh_voice": True})
+        ),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", "shared-gemini-key"
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_user_configurations",
+        AsyncMock(return_value=EffectiveAIModelConfiguration()),
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is False
+    assert resolved.source == "empty"
+
+
+@pytest.mark.asyncio
+async def test_saved_config_wins_over_managed_gemini(monkeypatch):
+    # A real saved v2 config must NOT be replaced by managed Gemini.
+    saved = {
+        "version": 2,
+        "mode": "byok",
+        "byok": {
+            "mode": "pipeline",
+            "pipeline": {
+                "llm": {"provider": "openai", "api_key": "sk-x", "model": "gpt-4.1"},
+                "tts": {"provider": "elevenlabs", "api_key": "el-x", "voice": "rachel"},
+                "stt": {"provider": "deepgram", "api_key": "dg-x", "model": "nova-2"},
+            },
+        },
+    }
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(side_effect=_config_reader(model_config_value=saved, profile_value={})),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", "shared-gemini-key"
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is False
+    assert resolved.source == "organization_v2"
+    assert resolved.effective.is_realtime is False

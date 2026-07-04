@@ -258,9 +258,18 @@ async def _model_configuration_v2_response(
         if configuration is not None
         else resolved.organization_configuration
     )
+    effective = mask_user_config(resolved.effective)
+    # Managed Gemini injects the platform/per-client key into the effective
+    # config for the runtime path only — the client must never see it (not even
+    # masked). Strip it from the realtime + LLM services in the response.
+    if resolved.managed_gemini and isinstance(effective, dict):
+        for svc_key in ("realtime", "llm"):
+            svc = effective.get(svc_key)
+            if isinstance(svc, dict):
+                svc.pop("api_key", None)
     return OrganizationAIModelConfigurationResponse(
         configuration=mask_ai_model_configuration_v2(raw_configuration),
-        effective_configuration=mask_user_config(resolved.effective),
+        effective_configuration=effective,
         source=resolved.source,
         configuration_invalid=resolved.organization_configuration_error is not None,
         configuration_error=resolved.organization_configuration_error,

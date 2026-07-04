@@ -167,6 +167,10 @@ export default function ClientDetailPage() {
   // Show-Dograh-voice toggle (per-client; default = Gemini voices only)
   const [savingDograhToggle, setSavingDograhToggle] = useState(false);
 
+  // Per-client Gemini key override (blank = use shared platform key)
+  const [geminiKeyInput, setGeminiKeyInput] = useState("");
+  const [savingGeminiKey, setSavingGeminiKey] = useState(false);
+
   // Pricing form
   const [perMinute, setPerMinute] = useState("");
   const [numberPrice, setNumberPrice] = useState("");
@@ -366,6 +370,27 @@ export default function ClientDetailPage() {
       toast.error(err instanceof Error ? err.message : "Failed to set balance");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const onSaveGeminiKey = async (clear = false) => {
+    const key = clear ? "" : geminiKeyInput.trim();
+    if (!clear && !key) return;
+    setSavingGeminiKey(true);
+    try {
+      const token = await getToken();
+      await updateAdminProfile(token, orgId, { gemini_api_key: key });
+      toast.success(
+        clear
+          ? "Custom Gemini key cleared — using the shared platform key"
+          : "Custom Gemini key saved for this client",
+      );
+      setGeminiKeyInput("");
+      await fetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save Gemini key");
+    } finally {
+      setSavingGeminiKey(false);
     }
   };
 
@@ -1002,6 +1027,52 @@ export default function ClientDetailPage() {
                           ? "This client sees Gemini + Dograh + BYOK."
                           : "This client sees Gemini voices only (all plans)."}
                       </p>
+
+                      <Separator className="my-4" />
+
+                      <Label
+                        htmlFor="gemini-key"
+                        className="text-sm font-medium"
+                      >
+                        Gemini API key
+                      </Label>
+                      <p className="mb-2 mt-1 text-xs text-muted-foreground">
+                        {detail.has_gemini_key
+                          ? "A custom key is set for this client."
+                          : "Using the shared platform Gemini key."}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          id="gemini-key"
+                          type="password"
+                          autoComplete="off"
+                          value={geminiKeyInput}
+                          onChange={(e) => setGeminiKeyInput(e.target.value)}
+                          placeholder={
+                            detail.has_gemini_key
+                              ? "Enter a new key to replace"
+                              : "Paste a client-specific Gemini key"
+                          }
+                          className="max-w-xs flex-1"
+                        />
+                        <Button
+                          size="sm"
+                          onClick={() => onSaveGeminiKey(false)}
+                          disabled={savingGeminiKey || !geminiKeyInput.trim()}
+                        >
+                          Save
+                        </Button>
+                        {detail.has_gemini_key && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => onSaveGeminiKey(true)}
+                            disabled={savingGeminiKey}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
 

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
-from api.constants import MPS_API_URL
+from api.constants import MPS_API_URL, PLATFORM_GEMINI_API_KEY
 from api.db import db_client
 from api.db.models import WorkflowDefinitionModel, WorkflowModel
 from api.enums import OrganizationConfigurationKey
@@ -34,12 +34,37 @@ from api.services.configuration.masking import (
     mask_key,
     resolve_masked_api_keys,
 )
-from api.services.configuration.registry import ServiceProviders
+from api.services.configuration.registry import (
+    GoogleLLMService,
+    GoogleRealtimeLLMConfiguration,
+    ServiceProviders,
+)
 from api.services.configuration.resolve import resolve_effective_config
 
 AIModelConfigurationSource = Literal["organization_v2", "legacy_user_v1", "empty"]
 WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY = "model_configuration_v2_override"
 WORKFLOW_MODEL_VOICE_OVERRIDE_KEY = "model_voice_override"
+
+# Default Gemini voice for managed (platform-key) google_realtime configs.
+MANAGED_GEMINI_DEFAULT_VOICE = "Puck"
+
+
+def build_managed_gemini_effective(
+    api_key: str, voice: str | None = None, language: str | None = None
+) -> EffectiveAIModelConfiguration:
+    """A ready-to-run google_realtime effective config using an injected key.
+
+    The realtime (speech-to-speech) service handles the conversation; a Google
+    LLM (same key) covers variable extraction / QA. The key is injected here for
+    the runtime path and stripped before the config is returned to the client.
+    """
+    realtime = GoogleRealtimeLLMConfiguration(
+        api_key=api_key,
+        voice=voice or MANAGED_GEMINI_DEFAULT_VOICE,
+        **({"language": language} if language else {}),
+    )
+    llm = GoogleLLMService(api_key=api_key)
+    return EffectiveAIModelConfiguration(llm=llm, realtime=realtime, is_realtime=True)
 
 
 @dataclass
@@ -50,6 +75,9 @@ class ResolvedAIModelConfiguration:
     # Set when a stored org v2 row exists but failed validation (we fell back
     # to legacy for runtime safety); lets the API surface the problem.
     organization_configuration_error: str | None = None
+    # True when the effective config was synthesized as managed Gemini (the
+    # injected api_key must be stripped before returning to the client).
+    managed_gemini: bool = False
 
 
 @dataclass
@@ -80,6 +108,25 @@ async def get_resolved_ai_model_configuration(
             source="organization_v2",
             organization_configuration=state.configuration,
         )
+
+    # Managed Gemini: a Gemini-only org (the default policy) with NO saved config
+    # gets a synthesized google_realtime effective config using the platform (or
+    # per-client) Gemini key — so the model tab, the agent-builder voice picker,
+    # and live calls all resolve to Gemini without the client ever typing a key.
+    # Only kicks in when a key is actually available, so it's a no-op until the
+    # platform key is configured. One profile read (this is on the call path).
+    if organization_id is not None:
+        from api.services.admin.profile import get_admin_profile
+
+        profile = await get_admin_profile(organization_id)
+        gemini_only = not bool(profile.get("show_dograh_voice"))
+        gemini_key = (profile.get("gemini_api_key") or "").strip() or PLATFORM_GEMINI_API_KEY
+        if gemini_only and gemini_key:
+            return ResolvedAIModelConfiguration(
+                effective=build_managed_gemini_effective(gemini_key),
+                source="organization_v2",
+                managed_gemini=True,
+            )
 
     if user_id is None:
         return ResolvedAIModelConfiguration(
