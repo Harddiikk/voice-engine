@@ -18,7 +18,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { VoiceSelectorModal } from "@/components/VoiceSelectorModal";
 import { LANGUAGE_DISPLAY_NAMES } from "@/constants/languages";
+import { useUserConfig } from "@/context/UserConfigContext";
 import { BRAND } from "@/lib/brand";
+
+// Google/Gemini provider keys (realtime + LLM): google, google_realtime,
+// google_vertex, google_vertex_realtime.
+const isGeminiProvider = (provider: string) => provider.includes("google");
 
 type ModelMode = "realtime" | "dograh" | "byok";
 
@@ -273,7 +278,27 @@ export function AIModelConfigurationV2Editor({
     onSave,
     submitLabel = "Save Configuration",
 }: AIModelConfigurationV2EditorProps) {
+    const { plan, isSuperuser, planLoaded } = useUserConfig();
+    // Trial orgs are limited to Gemini (speech-to-speech) voices only — no
+    // Dograh managed voice, no BYOK. Superusers are exempt.
+    const geminiOnly = planLoaded && plan === "trial" && !isSuperuser;
+
     const defaultsForByok = useMemo(() => byokDefaults(defaults), [defaults]);
+    // For trial (geminiOnly) orgs, restrict the realtime tab's realtime + LLM
+    // provider choices to Gemini/Google only.
+    const realtimeDefaults = useMemo(() => {
+        if (!geminiOnly) return defaultsForByok;
+        const pickGemini = (rec: Record<string, ProviderSchema>) =>
+            Object.fromEntries(
+                Object.entries(rec ?? {}).filter(([key]) => isGeminiProvider(key)),
+            );
+        return {
+            ...defaultsForByok,
+            realtime: pickGemini(defaultsForByok.realtime ?? {}),
+            llm: pickGemini(defaultsForByok.llm ?? {}),
+        };
+    }, [geminiOnly, defaultsForByok]);
+
     const [mode, setMode] = useState<ModelMode>("dograh");
     const [dograh, setDograh] = useState<DograhFormState>(() => ({
         api_key: "",
@@ -297,12 +322,16 @@ export function AIModelConfigurationV2Editor({
     useEffect(() => {
         const rawConfiguration = asRecord(configuration);
         const rawEffectiveConfiguration = asRecord(effectiveConfiguration);
-        setMode(preferredMode(rawConfiguration, rawEffectiveConfiguration));
+        setMode(
+            geminiOnly
+                ? "realtime"
+                : preferredMode(rawConfiguration, rawEffectiveConfiguration),
+        );
         const nextDograh = buildDograhState(defaults, rawConfiguration, rawEffectiveConfiguration);
         setDograh(nextDograh);
         setRealtimeInitialConfig(getByokInitialConfig(rawConfiguration, rawEffectiveConfiguration, true));
         setPipelineInitialConfig(getByokInitialConfig(rawConfiguration, rawEffectiveConfiguration, false));
-    }, [configuration, defaults, effectiveConfiguration, allowCustomVoice]);
+    }, [configuration, defaults, effectiveConfiguration, allowCustomVoice, geminiOnly]);
 
     const saveDograhConfiguration = async () => {
         setIsSavingDograh(true);
@@ -374,21 +403,28 @@ export function AIModelConfigurationV2Editor({
             )}
 
             <Tabs value={mode} onValueChange={(value) => setMode(value as ModelMode)} className="space-y-6">
-                <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="realtime">Speech to Speech</TabsTrigger>
-                    <TabsTrigger value="dograh">{BRAND.name}</TabsTrigger>
-                    <TabsTrigger value="byok">BYOK</TabsTrigger>
-                </TabsList>
+                {!geminiOnly && (
+                    <TabsList className="grid w-full grid-cols-3">
+                        <TabsTrigger value="realtime">Speech to Speech</TabsTrigger>
+                        <TabsTrigger value="dograh">{BRAND.name}</TabsTrigger>
+                        <TabsTrigger value="byok">BYOK</TabsTrigger>
+                    </TabsList>
+                )}
 
                 <TabsContent value="realtime" className="mt-0">
                     <p className="mb-4 text-sm text-muted-foreground">
                         A single speech-to-speech model handles the conversation in realtime (no separate transcriber or voice). An LLM is still required for variable extraction and QA.
                     </p>
+                    {geminiOnly && (
+                        <p className="mb-4 text-sm text-muted-foreground">
+                            Your plan includes Gemini voices. Upgrade to unlock more voices and models.
+                        </p>
+                    )}
                     <ServiceConfigurationForm
-                        key={`realtime-${JSON.stringify(realtimeInitialConfig)}`}
+                        key={`realtime-${geminiOnly ? "gemini-" : ""}${JSON.stringify(realtimeInitialConfig)}`}
                         mode="global"
                         forceRealtime
-                        configurationDefaults={defaultsForByok}
+                        configurationDefaults={realtimeDefaults}
                         initialConfig={realtimeInitialConfig}
                         submitLabel={submitLabel}
                         onSave={saveByokConfiguration}

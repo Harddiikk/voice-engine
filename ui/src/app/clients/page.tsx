@@ -21,7 +21,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 
-import { PlanBadge, SuspendedBadge } from "@/components/admin/AdminBadges";
+import { SuspendedBadge } from "@/components/admin/AdminBadges";
 import {
   formatCredits,
   formatInr,
@@ -71,11 +71,15 @@ import {
   createAdminClient,
   grantCreditsToClient,
   listAdminClients,
+  updateAdminProfile,
 } from "@/lib/adminClients";
 import { useAuth } from "@/lib/auth";
 import { impersonateAsSuperadmin } from "@/lib/utils";
 
 const LOW_BALANCE_THRESHOLD_INR = 100;
+
+// Sentinel for "no plan override" (clears back to the derived tier).
+const DERIVED = "__derived__";
 
 function VoiceLinkStatusBadge({ client }: { client: AdminClient }) {
   let badge: ReactNode;
@@ -152,6 +156,9 @@ export default function ClientsPage() {
   // Grant credits dialog state (kept as a quick row action)
   const [grantTarget, setGrantTarget] = useState<AdminClient | null>(null);
   const [grantMinutes, setGrantMinutes] = useState("");
+
+  // Which row's plan is currently being saved (inline plan promotion).
+  const [planSavingId, setPlanSavingId] = useState<number | null>(null);
 
   // New client dialog state
   const [createOpen, setCreateOpen] = useState(false);
@@ -249,6 +256,28 @@ export default function ClientsPage() {
       );
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Promote/change a client's plan inline from the list (sets a per-client
+  // plan override; "Derived" clears it back to the purchase-derived tier).
+  const onChangePlanInline = async (client: AdminClient, value: string) => {
+    const plan_override = value === DERIVED ? null : value;
+    setPlanSavingId(client.organization_id);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error("Missing access token");
+      await updateAdminProfile(token, client.organization_id, { plan_override });
+      toast.success(
+        plan_override
+          ? `Plan set to ${planLabel(plan_override)} for #${client.organization_id}`
+          : `Plan override cleared for #${client.organization_id} — now derived`,
+      );
+      await fetchClients();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to change plan");
+    } finally {
+      setPlanSavingId(null);
     }
   };
 
@@ -476,7 +505,25 @@ export default function ClientsPage() {
                       {client.owner_email ?? "—"}
                     </TableCell>
                     <TableCell>
-                      <PlanBadge plan={client.effective_plan} />
+                      <Select
+                        value={client.effective_plan ?? DERIVED}
+                        onValueChange={(value) =>
+                          onChangePlanInline(client, value)
+                        }
+                        disabled={planSavingId === client.organization_id}
+                      >
+                        <SelectTrigger className="h-8 w-[130px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={DERIVED}>Derived</SelectItem>
+                          {ADMIN_PLANS.map((p) => (
+                            <SelectItem key={p} value={p}>
+                              {planLabel(p)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </TableCell>
                     <TableCell>
                       <VoiceLinkStatusBadge client={client} />

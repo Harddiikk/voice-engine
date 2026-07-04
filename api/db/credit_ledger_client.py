@@ -382,6 +382,55 @@ class CreditLedgerClient(BaseDBClient):
                 await session.rollback()
                 return None
 
+    async def set_credits_tx(
+        self,
+        organization_id: int,
+        target_seconds: int,
+        created_by: Optional[int],
+        description: Optional[str] = None,
+    ) -> Optional[int]:
+        """Pin a metered org's balance to an exact value (admin correction).
+
+        Unlike ``grant_credits_tx`` (which only adds), this SETS the balance —
+        so an admin can correct it up or down (e.g. 9000 -> 6000 minutes). An
+        ``adjustment`` ledger row records the signed delta between the current
+        and target balance. Returns the new balance, or None for an unmetered
+        org (NULL balance — never convert unlimited to metered) or a negative
+        target.
+        """
+        if target_seconds < 0:
+            return None
+        async with self.async_session() as session:
+            try:
+                balance = await self._locked_balance(session, organization_id)
+                if balance is None:
+                    await session.rollback()
+                    return None
+                target = int(target_seconds)
+                delta = target - int(balance)
+                await session.execute(
+                    update(OrganizationModel)
+                    .where(
+                        OrganizationModel.id == organization_id,
+                        _BALANCE.isnot(None),
+                    )
+                    .values(free_call_seconds_remaining=target)
+                )
+                self._ledger_row(
+                    session,
+                    organization_id=organization_id,
+                    kind="adjustment",
+                    delta_seconds=delta,
+                    balance_after=target,
+                    created_by=created_by,
+                    description=description,
+                )
+                await session.commit()
+                return target
+            except IntegrityError:
+                await session.rollback()
+                return None
+
     async def charge_purchase_tx(
         self,
         organization_id: int,

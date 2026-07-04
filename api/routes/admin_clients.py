@@ -47,6 +47,8 @@ from api.schemas.admin_clients import (
     RecordPasswordResponse,
     RetryProvisionRequest,
     RetryProvisionResponse,
+    SetCreditsRequest,
+    SetCreditsResponse,
 )
 from api.services.admin.audit import record_admin_action
 from api.services.admin.profile import (
@@ -499,6 +501,65 @@ async def grant_credits(
     return GrantCreditsResponse(
         organization_id=org_id,
         granted_seconds=granted_seconds,
+        credits_seconds_remaining=new_balance,
+    )
+
+
+@router.post("/{org_id}/set-credits", response_model=SetCreditsResponse)
+async def set_credits(
+    org_id: int,
+    request: SetCreditsRequest,
+    user: UserModel = Depends(get_superuser),
+) -> SetCreditsResponse:
+    """Set a metered org's call-credits balance to an exact value (1 credit = 60s).
+
+    Unlike ``grant-credits`` (which only adds), this pins the balance so an admin
+    can correct it up or down (e.g. 9000 -> 6000 minutes, or 0 to zero it). The
+    signed delta is recorded as an ``adjustment`` ledger row. Unmetered orgs
+    (NULL balance = unlimited) are rejected with 409 — pinning a balance would
+    silently convert unlimited to metered.
+    """
+    organization = await db_client.get_organization_by_id(org_id)
+    if organization is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if organization.free_call_seconds_remaining is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Organization is unmetered (unlimited credits); setting a "
+                "balance would convert it to a metered balance. Refusing."
+            ),
+        )
+
+    target_seconds = request.minutes * 60
+    new_balance = await db_client.set_credits_tx(
+        org_id,
+        target_seconds,
+        created_by=user.id,
+        description=f"Admin set balance: {request.minutes} minutes",
+    )
+    if new_balance is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Organization is unmetered (unlimited credits); setting a "
+                "balance would convert it to a metered balance. Refusing."
+            ),
+        )
+
+    await record_admin_action(
+        actor_user_id=user.id,
+        target_organization_id=org_id,
+        action="set_credits",
+        detail={"minutes": request.minutes, "seconds": target_seconds},
+    )
+    logger.info(
+        f"Superuser {user.id} set org {org_id} balance to "
+        f"{request.minutes} minutes ({target_seconds}s); balance now {new_balance}s"
+    )
+    return SetCreditsResponse(
+        organization_id=org_id,
         credits_seconds_remaining=new_balance,
     )
 

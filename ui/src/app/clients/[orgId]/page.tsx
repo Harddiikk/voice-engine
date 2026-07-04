@@ -99,6 +99,7 @@ import {
   NO_STORED_PASSWORD,
   recordClientPassword,
   retryProvisionClient,
+  setClientCredits,
   updateAdminProfile,
 } from "@/lib/adminClients";
 import { useAuth } from "@/lib/auth";
@@ -153,6 +154,10 @@ export default function ClientDetailPage() {
   // Grant credits dialog
   const [grantOpen, setGrantOpen] = useState(false);
   const [grantMinutes, setGrantMinutes] = useState("");
+
+  // Set balance dialog (sets the exact balance, up or down)
+  const [setBalOpen, setSetBalOpen] = useState(false);
+  const [setBalMinutes, setSetBalMinutes] = useState("");
 
   // Pricing form
   const [perMinute, setPerMinute] = useState("");
@@ -295,6 +300,32 @@ export default function ClientDetailPage() {
       await fetchAll();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to grant credits");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const setBalMinutesNumber = Number(setBalMinutes);
+  const setBalMinutesValid =
+    setBalMinutes.trim() !== "" &&
+    Number.isInteger(setBalMinutesNumber) &&
+    setBalMinutesNumber >= 0 &&
+    setBalMinutesNumber <= 100000;
+
+  const onSetCredits = async () => {
+    if (!setBalMinutesValid) return;
+    setSubmitting(true);
+    try {
+      const token = await getToken();
+      const result = await setClientCredits(token, orgId, setBalMinutesNumber);
+      toast.success(
+        `Balance set to ${setBalMinutesNumber} minute${setBalMinutesNumber === 1 ? "" : "s"} — now ${formatCredits(result.credits_seconds_remaining)}`,
+      );
+      setSetBalOpen(false);
+      setSetBalMinutes("");
+      await fetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to set balance");
     } finally {
       setSubmitting(false);
     }
@@ -811,15 +842,31 @@ export default function ClientDetailPage() {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <Button
-                        onClick={() => {
-                          setGrantMinutes("");
-                          setGrantOpen(true);
-                        }}
-                        disabled={moneyUnlimited}
-                      >
-                        <Coins className="mr-2 h-4 w-4" /> Grant credits
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          onClick={() => {
+                            setGrantMinutes("");
+                            setGrantOpen(true);
+                          }}
+                          disabled={moneyUnlimited}
+                        >
+                          <Coins className="mr-2 h-4 w-4" /> Grant credits
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            const currentMinutes =
+                              money?.balance_seconds != null
+                                ? String(Math.floor(money.balance_seconds / 60))
+                                : "";
+                            setSetBalMinutes(currentMinutes);
+                            setSetBalOpen(true);
+                          }}
+                          disabled={moneyUnlimited}
+                        >
+                          Set balance
+                        </Button>
+                      </div>
                       {moneyUnlimited && (
                         <p className="mt-2 text-xs text-muted-foreground">
                           This org is unmetered — granting credits would start
@@ -1247,6 +1294,53 @@ export default function ClientDetailPage() {
             >
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Grant
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set balance dialog — sets the exact balance (up or down) */}
+      <Dialog open={setBalOpen} onOpenChange={setSetBalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Set balance</DialogTitle>
+            <DialogDescription>
+              Sets {detail?.owner_email ?? "this organization"}&apos;s credit
+              balance to an exact value (1 credit = 1 minute). Use this to
+              correct the balance up or down — e.g. 9,000 → 6,000. Enter 0 to
+              zero it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="detail-setbal-minutes">Minutes</Label>
+            <Input
+              id="detail-setbal-minutes"
+              type="number"
+              min={0}
+              max={100000}
+              step={1}
+              value={setBalMinutes}
+              onChange={(e) => setSetBalMinutes(e.target.value)}
+              placeholder="e.g. 6000"
+            />
+            <p className="text-xs text-muted-foreground">
+              Current balance: {formatCredits(money?.balance_seconds)}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSetBalOpen(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onSetCredits}
+              disabled={submitting || !setBalMinutesValid}
+            >
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Set balance
             </Button>
           </DialogFooter>
         </DialogContent>

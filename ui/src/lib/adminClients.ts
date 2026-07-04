@@ -182,6 +182,11 @@ export interface GrantCreditsResult {
   credits_seconds_remaining?: number | null;
 }
 
+export interface SetCreditsResult {
+  organization_id: number;
+  credits_seconds_remaining?: number | null;
+}
+
 // Backend detail string for GET /password when no display copy is stored
 // (absent, encryption key unset, or the stored token failed to decrypt).
 export const NO_STORED_PASSWORD = "no_stored_password";
@@ -308,6 +313,18 @@ export const grantCreditsToClient = (
   minutes: number,
 ) =>
   adminFetch<GrantCreditsResult>(token, `/${organizationId}/grant-credits`, {
+    method: "POST",
+    body: JSON.stringify({ minutes }),
+  });
+
+// Set the org's balance to an EXACT value (up or down), unlike grant which
+// only adds. `minutes` may be 0 to zero the balance.
+export const setClientCredits = (
+  token: string,
+  organizationId: number,
+  minutes: number,
+) =>
+  adminFetch<SetCreditsResult>(token, `/${organizationId}/set-credits`, {
     method: "POST",
     body: JSON.stringify({ minutes }),
   });

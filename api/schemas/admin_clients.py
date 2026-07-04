@@ -135,6 +135,27 @@ class GrantCreditsResponse(BaseModel):
     credits_seconds_remaining: Optional[int] = None
 
 
+class SetCreditsRequest(BaseModel):
+    """Set a metered org's call-credits balance to an exact value.
+
+    Unlike a grant (which adds), this pins the balance — used to correct it up
+    or down (e.g. 9000 -> 6000 minutes). ``0`` zeroes the balance.
+    """
+
+    minutes: int = Field(
+        ...,
+        ge=0,
+        le=100_000,
+        description="Exact minutes of call credit the org should have (converted to seconds).",
+    )
+
+
+class SetCreditsResponse(BaseModel):
+    organization_id: int
+    # Balance after the update (never None here — unmetered orgs are rejected).
+    credits_seconds_remaining: Optional[int] = None
+
+
 class ClientPasswordResponse(BaseModel):
     """The stored display copy of the client's VoiceLink portal password."""
 

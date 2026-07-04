@@ -181,6 +181,128 @@ def test_grant_credits_validates_minutes_bounds():
         assert response.status_code == 422, bad_body
 
 
+# ======== SET CREDITS (exact balance) ========
+
+
+def test_set_credits_pins_balance_up_or_down():
+    """Sets the balance to an exact value (e.g. 9000 -> 6000 minutes)."""
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch(
+            "api.routes.admin_clients.record_admin_action", new=AsyncMock()
+        ) as audit,
+    ):
+        # Currently 9000 minutes (540000s); set to 6000 minutes (360000s).
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(free_call_seconds_remaining=540_000)
+        )
+        db.set_credits_tx = AsyncMock(return_value=360_000)
+
+        response = client.post(
+            "/admin/clients/5/set-credits", json={"minutes": 6000}
+        )
+
+    assert response.status_code == 200
+    db.set_credits_tx.assert_awaited_once_with(
+        5, 360_000, created_by=1, description="Admin set balance: 6000 minutes"
+    )
+    audit.assert_awaited_once()  # the balance edit is audited
+    body = response.json()
+    assert body["organization_id"] == 5
+    assert body["credits_seconds_remaining"] == 360_000
+
+
+def test_set_credits_allows_zero():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch("api.routes.admin_clients.record_admin_action", new=AsyncMock()),
+    ):
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(free_call_seconds_remaining=540_000)
+        )
+        db.set_credits_tx = AsyncMock(return_value=0)
+
+        response = client.post(
+            "/admin/clients/5/set-credits", json={"minutes": 0}
+        )
+
+    assert response.status_code == 200
+    db.set_credits_tx.assert_awaited_once_with(
+        5, 0, created_by=1, description="Admin set balance: 0 minutes"
+    )
+    assert response.json()["credits_seconds_remaining"] == 0
+
+
+def test_set_credits_409_for_unmetered_org():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(free_call_seconds_remaining=None)
+        )
+        db.set_credits_tx = AsyncMock()
+
+        response = client.post(
+            "/admin/clients/5/set-credits", json={"minutes": 6000}
+        )
+
+    assert response.status_code == 409
+    assert "unmetered" in response.json()["detail"]
+    db.set_credits_tx.assert_not_awaited()
+
+
+def test_set_credits_409_when_org_turns_unmetered_concurrently():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with (
+        patch("api.routes.admin_clients.db_client") as db,
+        patch("api.routes.admin_clients.record_admin_action", new=AsyncMock()),
+    ):
+        db.get_organization_by_id = AsyncMock(
+            return_value=_org(free_call_seconds_remaining=120)
+        )
+        db.set_credits_tx = AsyncMock(return_value=None)
+
+        response = client.post(
+            "/admin/clients/5/set-credits", json={"minutes": 6000}
+        )
+
+    assert response.status_code == 409
+    assert "unmetered" in response.json()["detail"]
+
+
+def test_set_credits_404_for_unknown_org():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    with patch("api.routes.admin_clients.db_client") as db:
+        db.get_organization_by_id = AsyncMock(return_value=None)
+
+        response = client.post(
+            "/admin/clients/999/set-credits", json={"minutes": 6000}
+        )
+
+    assert response.status_code == 404
+
+
+def test_set_credits_validates_minutes_bounds():
+    app = _make_test_app()
+    client = TestClient(app)
+
+    # 0 is allowed for set (unlike grant); negatives and over-cap are rejected.
+    for bad_body in ({"minutes": -1}, {"minutes": 100_001}, {}):
+        response = client.post("/admin/clients/5/set-credits", json=bad_body)
+        assert response.status_code == 422, bad_body
+
+
 # ======== CREDITS IN LIST ========
 
 
