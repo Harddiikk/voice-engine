@@ -852,6 +852,29 @@ class CampaignClient(BaseDBClient):
             result = await session.execute(query)
             return list(result.scalars().all())
 
+    async def list_running_campaigns_with_due_retries(
+        self, now: datetime
+    ) -> list[CampaignModel]:
+        """Running campaigns with >=1 DUE scheduled retry (queued, scheduled_for
+        <= now). Feeds the retry dispatch-cron backstop — a resilience net for
+        when the in-process orchestrator loop isn't running."""
+        async with self.async_session() as session:
+            due_campaign_ids = (
+                select(QueuedRunModel.campaign_id)
+                .where(
+                    QueuedRunModel.state == "queued",
+                    QueuedRunModel.scheduled_for.isnot(None),
+                    QueuedRunModel.scheduled_for <= now,
+                )
+                .distinct()
+            )
+            query = select(CampaignModel).where(
+                CampaignModel.state == "running",
+                CampaignModel.id.in_(due_campaign_ids),
+            )
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
     async def get_queued_runs_count(self, campaign_id: int, states: list[str]) -> int:
         """Get count of queued runs for a campaign in specified states"""
         async with self.async_session() as session:
