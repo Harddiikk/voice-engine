@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func, text, update
 from sqlalchemy.future import select
+from sqlalchemy.orm import joinedload
 
 from api.db.base_client import BaseDBClient
 from api.db.filters import apply_workflow_run_filters, get_workflow_run_order_clause
@@ -198,9 +199,12 @@ class CampaignClient(BaseDBClient):
             if not campaign:
                 raise ValueError(f"Campaign {campaign_id} not found")
 
-            # Build base query
-            base_query = select(WorkflowRunModel).where(
-                WorkflowRunModel.campaign_id == campaign_id
+            # Build base query; eager-load the queued_run so each row can carry
+            # its retry attempt number + reason (per-contact attempt history).
+            base_query = (
+                select(WorkflowRunModel)
+                .where(WorkflowRunModel.campaign_id == campaign_id)
+                .options(joinedload(WorkflowRunModel.queued_run))
             )
 
             # Apply filters
@@ -247,6 +251,14 @@ class CampaignClient(BaseDBClient):
                         # Post-call WhatsApp send result (if configured/attempted):
                         # {attempted, ok, detail, to, provider} or None.
                         "whatsapp": (run.logs or {}).get("whatsapp_post_call"),
+                        # Retry attempt history: attempt 1 = original; retries
+                        # carry retry_count>0 + the reason they were scheduled.
+                        "retry_count": (
+                            run.queued_run.retry_count if run.queued_run else 0
+                        ),
+                        "retry_reason": (
+                            run.queued_run.retry_reason if run.queued_run else None
+                        ),
                     }
                 )
                 for run in result.scalars().all()

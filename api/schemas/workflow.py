@@ -32,3 +32,7 @@ class WorkflowRunResponseSchema(BaseModel):
     annotations: Dict[str, Any] | None = None
     # Post-call WhatsApp send result: {attempted, ok, detail, to, provider} or None.
     whatsapp: Dict[str, Any] | None = None
+    # Retry attempt history for campaign runs: retry_count 0 = first attempt;
+    # retry_reason is why THIS call was scheduled (busy/no_answer/voicemail/failed).
+    retry_count: int | None = None
+    retry_reason: str | None = None

@@ -59,6 +59,31 @@ export interface WorkflowRunsTableProps {
     emptyMessage?: string;
 }
 
+// Per-contact attempt history: attempt 1 = original; retries carry
+// retry_count>0 and the reason they were scheduled. retry_count/retry_reason
+// are returned by the campaign runs endpoint but predate the generated client
+// type, so read them via a cast.
+function AttemptCell({ run }: { run: WorkflowRunResponseSchema }) {
+    const meta = run as unknown as {
+        retry_count?: number | null;
+        retry_reason?: string | null;
+    };
+    const attempt = (meta.retry_count ?? 0) + 1;
+    if (attempt <= 1) {
+        return <span className="text-muted-foreground">1st</span>;
+    }
+    return (
+        <span className="inline-flex flex-col leading-tight">
+            <span className="font-medium">Retry {attempt - 1}</span>
+            {meta.retry_reason && (
+                <span className="text-xs text-muted-foreground">
+                    {meta.retry_reason.replace(/_/g, " ")}
+                </span>
+            )}
+        </span>
+    );
+}
+
 export function WorkflowRunsTable({
     runs,
     loading,
@@ -158,6 +183,7 @@ export function WorkflowRunsTable({
                                         <TableHead className="font-semibold">Status</TableHead>
                                         <TableHead className="font-semibold">Created At</TableHead>
                                         <TableHead className="font-semibold">Call Type</TableHead>
+                                        <TableHead className="font-semibold">Attempt</TableHead>
                                         <TableHead
                                             className="font-semibold cursor-pointer hover:bg-muted/50 select-none"
                                             onClick={() => onSort?.('duration')}
@@ -194,6 +220,9 @@ export function WorkflowRunsTable({
                                             <TableCell className="text-sm">{formatDate(run.created_at)}</TableCell>
                                             <TableCell>
                                                 <CallTypeCell mode={run.mode} callType={run.call_type} />
+                                            </TableCell>
+                                            <TableCell className="text-sm">
+                                                <AttemptCell run={run} />
                                             </TableCell>
                                             <TableCell className="text-sm">
                                                 {typeof run.cost_info?.call_duration_seconds === 'number'

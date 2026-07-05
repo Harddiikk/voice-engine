@@ -32,6 +32,10 @@ from api.services.campaign.campaign_event_protocol import (
 )
 from api.services.campaign.campaign_event_publisher import CampaignEventPublisher
 from api.services.campaign.circuit_breaker import circuit_breaker
+from api.services.campaign.retry_policy import (
+    followup_context_line,
+    retry_delay_for_attempt,
+)
 from api.services.campaign.schedule import is_within_schedule, next_window_start
 from api.tasks.arq import enqueue_job
 from api.tasks.function_names import FunctionNames
@@ -229,7 +233,10 @@ class CampaignOrchestrator:
             return
 
         # Create scheduled retry entry, clamped into the calling window.
-        retry_delay = retry_config.get("retry_delay_seconds", 120)
+        # Escalating delays: retry_delays_seconds[i] is the wait before the
+        # (i+1)-th attempt (2m -> 15m -> 1h); the last entry repeats for further
+        # attempts. Falls back to the fixed retry_delay_seconds when unset.
+        retry_delay = retry_delay_for_attempt(retry_config, queued_run.retry_count)
         schedule_config = (campaign.orchestrator_metadata or {}).get("schedule_config")
         await self._schedule_retry(queued_run, reason, retry_delay, schedule_config)
 
@@ -253,6 +260,8 @@ class CampaignOrchestrator:
             "is_retry": True,
             "retry_attempt": original_run.retry_count + 1,
             "retry_reason": reason,
+            # Drop-in {{followup_context}} for a retry-aware opening line.
+            "followup_context": followup_context_line(reason),
         }
 
         # Base due-time = now + delay; then push forward to the next in-window

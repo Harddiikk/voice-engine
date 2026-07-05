@@ -45,6 +45,8 @@ export interface CampaignAdvancedSettingsProps {
     onRetryOnVoicemailChange: (value: boolean) => void;
     retryOnFailed: boolean;
     onRetryOnFailedChange: (value: boolean) => void;
+    retryDelaysSeconds: string;
+    onRetryDelaysSecondsChange: (value: string) => void;
     // Voicemail / IVR hangup
     hangupOnVoicemail: boolean;
     onHangupOnVoicemailChange: (value: boolean) => void;
@@ -119,6 +121,7 @@ export default function CampaignAdvancedSettings({
     retryOnBusy, onRetryOnBusyChange, retryOnNoAnswer, onRetryOnNoAnswerChange,
     retryOnVoicemail, onRetryOnVoicemailChange,
     retryOnFailed, onRetryOnFailedChange,
+    retryDelaysSeconds, onRetryDelaysSecondsChange,
     hangupOnVoicemail, onHangupOnVoicemailChange,
     scheduleEnabled, onScheduleEnabledChange, scheduleTimezone, onScheduleTimezoneChange,
     timeSlots, onTimeSlotsChange,
@@ -200,6 +203,21 @@ export default function CampaignAdvancedSettings({
                                     max={3600}
                                 />
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="retry-delays">Escalating delays (optional)</Label>
+                            <Input
+                                id="retry-delays"
+                                value={retryDelaysSeconds}
+                                onChange={(e) => onRetryDelaysSecondsChange(e.target.value)}
+                                placeholder="e.g. 120, 900, 3600"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Comma-separated seconds — the wait before each successive
+                                attempt (e.g. 120, 900, 3600 = 2m, 15m, 1h; the last value
+                                repeats). Leave blank to use the fixed delay above every time.
+                            </p>
                         </div>
 
                         <div className="space-y-3">

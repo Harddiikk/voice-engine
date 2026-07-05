@@ -74,6 +74,7 @@ export default function NewCampaignPage() {
     const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
     const [retryOnVoicemail, setRetryOnVoicemail] = useState(true);
     const [retryOnFailed, setRetryOnFailed] = useState(false);
+    const [retryDelaysSeconds, setRetryDelaysSeconds] = useState("");
     // Hang up on voicemail / IVR — default ON to match the platform's
     // default-on voicemail detection (saves credits on answering machines).
     const [hangupOnVoicemail, setHangupOnVoicemail] = useState(true);
@@ -170,7 +171,7 @@ export default function NewCampaignPage() {
                 if (typeof capacity === 'number') setDefaultChannelCapacity(capacity);
 
                 const last = (response.data as { last_campaign_settings?: {
-                    retry_config?: { enabled: boolean; max_retries: number; retry_delay_seconds: number; retry_on_busy: boolean; retry_on_no_answer: boolean; retry_on_voicemail: boolean; retry_on_failed?: boolean };
+                    retry_config?: { enabled: boolean; max_retries: number; retry_delay_seconds: number; retry_on_busy: boolean; retry_on_no_answer: boolean; retry_on_voicemail: boolean; retry_on_failed?: boolean; retry_delays_seconds?: number[] | null };
                     max_concurrency?: number | null;
                     schedule_config?: { enabled: boolean; timezone: string; slots: TimeSlot[] } | null;
                     circuit_breaker?: { enabled: boolean; failure_threshold: number; window_seconds: number; min_calls_in_window: number } | null;
@@ -187,6 +188,7 @@ export default function NewCampaignPage() {
                         setRetryOnNoAnswer(last.retry_config.retry_on_no_answer);
                         setRetryOnVoicemail(last.retry_config.retry_on_voicemail);
                         setRetryOnFailed(last.retry_config.retry_on_failed ?? false);
+                        setRetryDelaysSeconds((last.retry_config.retry_delays_seconds ?? []).join(", "));
                     } else {
                         const retryConfig = response.data.default_retry_config;
                         setRetryEnabled(retryConfig.enabled);
@@ -298,6 +300,10 @@ export default function NewCampaignPage() {
                 retry_on_no_answer: retryOnNoAnswer,
                 retry_on_voicemail: retryOnVoicemail,
                 retry_on_failed: retryOnFailed,
+                retry_delays_seconds: retryDelaysSeconds
+                    .split(",")
+                    .map((s) => parseInt(s.trim(), 10))
+                    .filter((n) => Number.isFinite(n) && n > 0),
             };
 
             // Build schedule_config if enabled
@@ -577,6 +583,8 @@ export default function NewCampaignPage() {
                                         onRetryOnVoicemailChange={setRetryOnVoicemail}
                                         retryOnFailed={retryOnFailed}
                                         onRetryOnFailedChange={setRetryOnFailed}
+                                        retryDelaysSeconds={retryDelaysSeconds}
+                                        onRetryDelaysSecondsChange={setRetryDelaysSeconds}
                                         hangupOnVoicemail={hangupOnVoicemail}
                                         onHangupOnVoicemailChange={setHangupOnVoicemail}
                                         scheduleEnabled={scheduleEnabled}

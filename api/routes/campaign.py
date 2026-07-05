@@ -122,6 +122,18 @@ class RetryConfigRequest(BaseModel):
     # Off by default — a failed-to-connect call is often a permanent number
     # problem, so re-dialing is opt-in per campaign.
     retry_on_failed: bool = False
+    # Optional escalating delays (seconds) — the i-th entry is the wait before
+    # the (i+1)-th attempt; last entry repeats. Empty/absent = fixed
+    # retry_delay_seconds for every attempt.
+    retry_delays_seconds: Optional[List[int]] = Field(default=None, max_length=10)
+
+    @field_validator("retry_delays_seconds")
+    @classmethod
+    def _validate_delays(cls, v: Optional[List[int]]) -> Optional[List[int]]:
+        if not v:
+            return None
+        cleaned = [int(d) for d in v if isinstance(d, (int, float)) and 30 <= d <= 86400]
+        return cleaned or None
 
 
 class RetryConfigResponse(BaseModel):
@@ -132,6 +144,7 @@ class RetryConfigResponse(BaseModel):
     retry_on_no_answer: bool
     retry_on_voicemail: bool
     retry_on_failed: bool = False
+    retry_delays_seconds: Optional[List[int]] = None
 
 
 class TimeSlotRequest(BaseModel):

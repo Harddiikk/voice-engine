@@ -52,6 +52,7 @@ export default function EditCampaignPage() {
     const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
     const [retryOnVoicemail, setRetryOnVoicemail] = useState(true);
     const [retryOnFailed, setRetryOnFailed] = useState(false);
+    const [retryDelaysSeconds, setRetryDelaysSeconds] = useState("");
     // Hang up on voicemail / IVR — default ON (matches default-on voicemail
     // detection). Populated from the campaign on load.
     const [hangupOnVoicemail, setHangupOnVoicemail] = useState(true);
@@ -108,6 +109,7 @@ export default function EditCampaignPage() {
                 setRetryOnNoAnswer(c.retry_config.retry_on_no_answer);
                 setRetryOnVoicemail(c.retry_config.retry_on_voicemail);
                 setRetryOnFailed((c.retry_config as { retry_on_failed?: boolean }).retry_on_failed ?? false);
+                setRetryDelaysSeconds(((c.retry_config as { retry_delays_seconds?: number[] | null }).retry_delays_seconds ?? []).join(", "));
 
                 // Schedule config
                 if (c.schedule_config) {
@@ -234,6 +236,10 @@ export default function EditCampaignPage() {
                 retry_on_no_answer: retryOnNoAnswer,
                 retry_on_voicemail: retryOnVoicemail,
                 retry_on_failed: retryOnFailed,
+                retry_delays_seconds: retryDelaysSeconds
+                    .split(",")
+                    .map((s) => parseInt(s.trim(), 10))
+                    .filter((n) => Number.isFinite(n) && n > 0),
             };
 
             const timezoneValue = getTimezoneValue(scheduleTimezone);
@@ -382,6 +388,8 @@ export default function EditCampaignPage() {
                             onRetryOnVoicemailChange={setRetryOnVoicemail}
                             retryOnFailed={retryOnFailed}
                             onRetryOnFailedChange={setRetryOnFailed}
+                            retryDelaysSeconds={retryDelaysSeconds}
+                            onRetryDelaysSecondsChange={setRetryDelaysSeconds}
                             hangupOnVoicemail={hangupOnVoicemail}
                             onHangupOnVoicemailChange={setHangupOnVoicemail}
                             scheduleEnabled={scheduleEnabled}
