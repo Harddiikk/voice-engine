@@ -228,6 +228,9 @@ class CreateCampaignRequest(BaseModel):
     # runs. When None, the workflow default applies. When set, controls whether
     # the agent hangs up on an answering machine / IVR greeting.
     hangup_on_voicemail: Optional[bool] = None
+    # Optional spend cap for the campaign, in minutes. When set, the campaign
+    # auto-pauses once it has consumed this many call-minutes. None = uncapped.
+    budget_minutes: Optional[int] = Field(default=None, ge=1, le=1_000_000)
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -237,6 +240,8 @@ class UpdateCampaignRequest(BaseModel):
     schedule_config: Optional[ScheduleConfigRequest] = None
     circuit_breaker: Optional[CircuitBreakerConfigRequest] = None
     hangup_on_voicemail: Optional[bool] = None
+    # Spend cap in minutes; send 0 to clear the cap (uncapped).
+    budget_minutes: Optional[int] = Field(default=None, ge=0, le=1_000_000)
 
 
 class CampaignLogEntryResponse(BaseModel):
@@ -269,6 +274,7 @@ class CampaignResponse(BaseModel):
     completed_at: Optional[datetime]
     retry_config: RetryConfigResponse
     max_concurrency: Optional[int] = None
+    budget_minutes: Optional[int] = None
     schedule_config: Optional[ScheduleConfigResponse] = None
     circuit_breaker: Optional[CircuitBreakerConfigResponse] = None
     # Per-campaign override of the workflow's voicemail hangup behavior. None
@@ -354,6 +360,7 @@ def _build_campaign_response(
 
     # Get max_concurrency, schedule_config, circuit_breaker from orchestrator_metadata
     max_concurrency = None
+    budget_minutes = None
     schedule_config = None
     circuit_breaker_config = CircuitBreakerConfigResponse()
     parent_campaign_id = None
@@ -362,6 +369,9 @@ def _build_campaign_response(
     consumed_seconds = 0
     if campaign.orchestrator_metadata:
         max_concurrency = campaign.orchestrator_metadata.get("max_concurrency")
+        _budget_seconds = campaign.orchestrator_metadata.get("budget_seconds")
+        if _budget_seconds:
+            budget_minutes = int(int(_budget_seconds) / 60)
         hangup_on_voicemail = campaign.orchestrator_metadata.get("hangup_on_voicemail")
         sc = campaign.orchestrator_metadata.get("schedule_config")
         if sc:
@@ -406,6 +416,7 @@ def _build_campaign_response(
         started_at=campaign.started_at,
         completed_at=campaign.completed_at,
         retry_config=RetryConfigResponse(**retry_config),
+        budget_minutes=budget_minutes,
         max_concurrency=max_concurrency,
         schedule_config=schedule_config,
         circuit_breaker=circuit_breaker_config,
@@ -585,6 +596,9 @@ async def create_campaign(
         column_mapping=request.column_mapping,
         default_country_code=request.default_country_code,
         hangup_on_voicemail=request.hangup_on_voicemail,
+        budget_seconds=(
+            request.budget_minutes * 60 if request.budget_minutes else None
+        ),
     )
 
     cfg_name = await _get_telephony_configuration_name(
@@ -907,6 +921,14 @@ async def update_campaign(
 
     if request.max_concurrency is not None:
         metadata["max_concurrency"] = request.max_concurrency
+        metadata_changed = True
+
+    # budget_minutes: >0 sets the cap; 0 clears it (uncapped).
+    if request.budget_minutes is not None:
+        if request.budget_minutes > 0:
+            metadata["budget_seconds"] = request.budget_minutes * 60
+        else:
+            metadata.pop("budget_seconds", None)
         metadata_changed = True
 
     if request.schedule_config is not None:

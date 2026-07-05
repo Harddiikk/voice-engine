@@ -36,6 +36,7 @@ export default function EditCampaignPage() {
     // Form state
     const [campaignName, setCampaignName] = useState('');
     const [maxConcurrency, setMaxConcurrency] = useState<string>('');
+    const [budgetMinutes, setBudgetMinutes] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -100,6 +101,7 @@ export default function EditCampaignPage() {
                 // Populate form state
                 setCampaignName(c.name);
                 setMaxConcurrency(c.max_concurrency ? String(c.max_concurrency) : '');
+                setBudgetMinutes((c as { budget_minutes?: number | null }).budget_minutes ? String((c as { budget_minutes?: number | null }).budget_minutes) : '');
 
                 // Retry config
                 setRetryEnabled(c.retry_config.enabled);
@@ -269,6 +271,7 @@ export default function EditCampaignPage() {
                     name: campaignName,
                     retry_config: retryConfig,
                     max_concurrency: maxConcurrencyValue,
+                    budget_minutes: budgetMinutes ? parseInt(budgetMinutes, 10) : 0,
                     schedule_config: scheduleConfig,
                     circuit_breaker: circuitBreakerConfig,
                     hangup_on_voicemail: hangupOnVoicemail,
@@ -369,6 +372,8 @@ export default function EditCampaignPage() {
 
                         <CampaignAdvancedSettings
                             maxConcurrency={maxConcurrency}
+                            budgetMinutes={budgetMinutes}
+                            onBudgetMinutesChange={setBudgetMinutes}
                             onMaxConcurrencyChange={setMaxConcurrency}
                             effectiveLimit={effectiveLimit}
                             orgConcurrentLimit={orgConcurrentLimit}

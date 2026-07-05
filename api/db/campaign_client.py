@@ -31,6 +31,7 @@ class CampaignClient(BaseDBClient):
         column_mapping: Optional[dict] = None,
         default_country_code: Optional[str] = None,
         hangup_on_voicemail: Optional[bool] = None,
+        budget_seconds: Optional[int] = None,
     ) -> CampaignModel:
         """Create a new campaign"""
         async with self.async_session() as session:
@@ -38,6 +39,8 @@ class CampaignClient(BaseDBClient):
             orchestrator_metadata = {}
             if max_concurrency is not None:
                 orchestrator_metadata["max_concurrency"] = max_concurrency
+            if budget_seconds is not None:
+                orchestrator_metadata["budget_seconds"] = budget_seconds
             if schedule_config is not None:
                 orchestrator_metadata["schedule_config"] = schedule_config
             if circuit_breaker is not None:

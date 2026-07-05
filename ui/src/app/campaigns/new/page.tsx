@@ -66,6 +66,7 @@ export default function NewCampaignPage() {
     const [fromNumbersCount, setFromNumbersCount] = useState<number>(0);
     const [defaultChannelCapacity, setDefaultChannelCapacity] = useState<number>(0);
     const [maxConcurrency, setMaxConcurrency] = useState<string>('');
+    const [budgetMinutes, setBudgetMinutes] = useState<string>('');
     // Retry config state
     const [retryEnabled, setRetryEnabled] = useState(true);
     const [maxRetries, setMaxRetries] = useState<string>('2');
@@ -334,6 +335,7 @@ export default function NewCampaignPage() {
                     telephony_configuration_id: parseInt(selectedTelephonyConfigId),
                     retry_config: retryConfig,
                     max_concurrency: maxConcurrencyValue,
+                    budget_minutes: budgetMinutes ? parseInt(budgetMinutes, 10) : null,
                     schedule_config: scheduleConfig,
                     circuit_breaker: circuitBreakerConfig,
                     column_mapping: Object.keys(columnMapping).length ? columnMapping : undefined,
@@ -564,6 +566,8 @@ export default function NewCampaignPage() {
                                 <CollapsibleContent className="px-4 pb-4">
                                     <CampaignAdvancedSettings
                                         maxConcurrency={maxConcurrency}
+                                        budgetMinutes={budgetMinutes}
+                                        onBudgetMinutesChange={setBudgetMinutes}
                                         onMaxConcurrencyChange={setMaxConcurrency}
                                         effectiveLimit={effectiveLimit}
                                         orgConcurrentLimit={orgConcurrentLimit}

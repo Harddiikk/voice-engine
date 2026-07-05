@@ -16,6 +16,7 @@ from api.services.campaign.errors import (
 )
 from api.services.campaign.rate_limiter import rate_limiter
 from api.services.quota_service import authorize_workflow_run_start
+from api.services.campaign.budget import campaign_budget_exhausted
 from api.services.trial_credits import has_free_call_seconds
 from api.utils.common import get_backend_endpoints
 
@@ -91,6 +92,16 @@ class CampaignCallDispatcher:
             logger.warning(
                 f"Campaign {campaign_id}: org {campaign.organization_id} out of trial "
                 f"call seconds — pausing campaign"
+            )
+            await db_client.update_campaign(campaign_id=campaign_id, state="paused")
+            return 0
+
+        # Per-campaign budget cap: pause once the campaign has consumed its
+        # allotted seconds. Checked at batch start (like the trial gate), so
+        # overrun is bounded to at most one in-flight batch.
+        if campaign_budget_exhausted(campaign.orchestrator_metadata):
+            logger.warning(
+                f"Campaign {campaign_id}: spend budget reached — pausing campaign"
             )
             await db_client.update_campaign(campaign_id=campaign_id, state="paused")
             return 0

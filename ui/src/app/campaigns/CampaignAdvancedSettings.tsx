@@ -23,6 +23,8 @@ export type TimeSlot = { day_of_week: number; start_time: string; end_time: stri
 export interface CampaignAdvancedSettingsProps {
     // Concurrency
     maxConcurrency: string;
+    budgetMinutes: string;
+    onBudgetMinutesChange: (value: string) => void;
     onMaxConcurrencyChange: (value: string) => void;
     effectiveLimit: number;
     orgConcurrentLimit: number;
@@ -115,6 +117,7 @@ const timezoneSelectStyles = {
 
 export default function CampaignAdvancedSettings({
     maxConcurrency, onMaxConcurrencyChange, effectiveLimit, orgConcurrentLimit, fromNumbersCount,
+    budgetMinutes, onBudgetMinutesChange,
     channelCapacity = 0,
     retryEnabled, onRetryEnabledChange, maxRetries, onMaxRetriesChange,
     retryDelaySeconds, onRetryDelaySecondsChange,
@@ -160,6 +163,23 @@ export default function CampaignAdvancedSettings({
                         No phone numbers configured. Add a number in <Link href="/telephony-configurations" className="underline font-medium">Telephony Configuration</Link> before running the campaign.
                     </p>
                 )}
+            </div>
+
+            {/* Campaign budget */}
+            <div className="space-y-2">
+                <Label htmlFor="budget-minutes">Budget (minutes)</Label>
+                <Input
+                    id="budget-minutes"
+                    type="number"
+                    placeholder="Uncapped"
+                    value={budgetMinutes}
+                    onChange={(e) => onBudgetMinutesChange(e.target.value)}
+                    min={1}
+                />
+                <p className="text-sm text-muted-foreground">
+                    Spend cap for this campaign — it auto-pauses once it has used
+                    this many call-minutes. Leave empty for no cap.
+                </p>
             </div>
 
             {/* Retry Configuration */}
