@@ -47,6 +47,8 @@ WORKFLOW_MODEL_VOICE_OVERRIDE_KEY = "model_voice_override"
 
 # Default Gemini voice for managed (platform-key) google_realtime configs.
 MANAGED_GEMINI_DEFAULT_VOICE = "Puck"
+# Cheapest capable Gemini text tier for the managed companion LLM.
+MANAGED_GEMINI_LLM_MODEL = "gemini-2.5-flash-lite"
 
 # Realtime providers whose voices come from the Gemini prebuilt catalog.
 _GEMINI_REALTIME_PROVIDERS = (
@@ -106,7 +108,9 @@ def build_managed_gemini_effective(
         voice=voice or MANAGED_GEMINI_DEFAULT_VOICE,
         **({"language": language} if language else {}),
     )
-    llm = GoogleLLMService(api_key=api_key)
+    # Companion LLM (variable extraction + QA + interest classification): the
+    # cheapest capable Gemini tier keeps managed orgs at the cost floor.
+    llm = GoogleLLMService(api_key=api_key, model=MANAGED_GEMINI_LLM_MODEL)
     return EffectiveAIModelConfiguration(llm=llm, realtime=realtime, is_realtime=True)
 
 
