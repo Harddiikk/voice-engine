@@ -234,6 +234,16 @@ async def run_integrations_post_workflow_run(_ctx, workflow_run_id: int):
 
         public_token = await db_client.ensure_public_access_token(workflow_run_id)
 
+        # Campaign voicemail follow-up (busy/no-answer retries fire from the
+        # telephony status processor; voicemail is detected in-pipeline so it
+        # must be triggered here).
+        if has_campaign:
+            from api.services.campaign.voicemail_retry import (
+                maybe_publish_voicemail_retry,
+            )
+
+            await maybe_publish_voicemail_retry(workflow_run)
+
         # Step 5: Run QA analysis before webhooks
         if qa_nodes:
             logger.info(f"Found {len(qa_nodes)} QA nodes to execute")

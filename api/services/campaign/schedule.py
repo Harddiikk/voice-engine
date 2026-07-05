@@ -21,7 +21,7 @@ orchestrator and tests can use them directly.
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from loguru import logger
@@ -114,6 +114,33 @@ def is_within_schedule(
     current_time = local_now.strftime("%H:%M")
 
     return any(slot_matches(slot, current_day, current_time) for slot in slots)
+
+
+def next_window_start(
+    schedule_config: dict | None,
+    after: datetime,
+    *,
+    campaign_id: int | None = None,
+) -> datetime:
+    """Earliest instant >= ``after`` at which calls are allowed by the schedule.
+
+    Returns ``after`` unchanged when it's already in-window or the schedule is
+    fail-open (missing/disabled/no slots/bad timezone). Otherwise scans forward
+    in 5-minute steps (capped at 8 days) to the next in-window instant; if none
+    is found, returns ``after`` (fail-open, never blocks a retry forever).
+
+    Used to align a retry's ``scheduled_for`` to the calling window so the
+    due-first claim query picks it up as soon as the window opens.
+    """
+    if is_within_schedule(schedule_config, now=after, campaign_id=campaign_id):
+        return after
+    step = timedelta(minutes=5)
+    cursor = after
+    for _ in range(8 * 24 * 12):  # 8 days of 5-minute steps
+        cursor = cursor + step
+        if is_within_schedule(schedule_config, now=cursor, campaign_id=campaign_id):
+            return cursor
+    return after
 
 
 def default_schedule_config() -> dict | None:

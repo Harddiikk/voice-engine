@@ -51,6 +51,7 @@ export default function EditCampaignPage() {
     const [retryOnBusy, setRetryOnBusy] = useState(true);
     const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
     const [retryOnVoicemail, setRetryOnVoicemail] = useState(true);
+    const [retryOnFailed, setRetryOnFailed] = useState(false);
     // Hang up on voicemail / IVR — default ON (matches default-on voicemail
     // detection). Populated from the campaign on load.
     const [hangupOnVoicemail, setHangupOnVoicemail] = useState(true);
@@ -106,6 +107,7 @@ export default function EditCampaignPage() {
                 setRetryOnBusy(c.retry_config.retry_on_busy);
                 setRetryOnNoAnswer(c.retry_config.retry_on_no_answer);
                 setRetryOnVoicemail(c.retry_config.retry_on_voicemail);
+                setRetryOnFailed((c.retry_config as { retry_on_failed?: boolean }).retry_on_failed ?? false);
 
                 // Schedule config
                 if (c.schedule_config) {
@@ -231,6 +233,7 @@ export default function EditCampaignPage() {
                 retry_on_busy: retryOnBusy,
                 retry_on_no_answer: retryOnNoAnswer,
                 retry_on_voicemail: retryOnVoicemail,
+                retry_on_failed: retryOnFailed,
             };
 
             const timezoneValue = getTimezoneValue(scheduleTimezone);
@@ -377,6 +380,8 @@ export default function EditCampaignPage() {
                             onRetryOnNoAnswerChange={setRetryOnNoAnswer}
                             retryOnVoicemail={retryOnVoicemail}
                             onRetryOnVoicemailChange={setRetryOnVoicemail}
+                            retryOnFailed={retryOnFailed}
+                            onRetryOnFailedChange={setRetryOnFailed}
                             hangupOnVoicemail={hangupOnVoicemail}
                             onHangupOnVoicemailChange={setHangupOnVoicemail}
                             scheduleEnabled={scheduleEnabled}

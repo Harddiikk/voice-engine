@@ -65,6 +65,13 @@ IN_FLIGHT_STATUSES = frozenset(
 RETRYABLE_NOT_CONNECTED_STATUSES = frozenset(
     {TelephonyCallStatus.BUSY, TelephonyCallStatus.NO_ANSWER}
 )
+# Statuses we publish a retry event for; the orchestrator decides eligibility
+# per the campaign's retry_config flags. FAILED is included (gated on
+# retry_on_failed, default off) so failed-to-connect calls can be re-tried;
+# ERROR stays excluded (system-side, not a carrier outcome worth redialing).
+RETRY_PUBLISH_STATUSES = RETRYABLE_NOT_CONNECTED_STATUSES | frozenset(
+    {TelephonyCallStatus.FAILED}
+)
 FAILURE_NOT_CONNECTED_STATUSES = frozenset(
     {TelephonyCallStatus.ERROR, TelephonyCallStatus.FAILED}
 )
@@ -232,7 +239,7 @@ async def _process_status_update(workflow_run_id: int, status: StatusCallbackReq
             await _bump_campaign_consumed(workflow_run.campaign_id, status.duration)
 
         if (
-            normalized_status in RETRYABLE_NOT_CONNECTED_STATUSES
+            normalized_status in RETRY_PUBLISH_STATUSES
             and workflow_run.campaign_id
         ):
             publisher = await get_campaign_event_publisher()

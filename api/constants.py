@@ -315,7 +315,12 @@ DEFAULT_CAMPAIGN_RETRY_CONFIG = {
     "retry_delay_seconds": 120,
     "retry_on_busy": True,
     "retry_on_no_answer": True,
-    "retry_on_voicemail": False,
+    # Voicemail follow-up ON by default (now that the trigger is wired) —
+    # matches the DB server_default + API default so new campaigns re-call
+    # voicemail hits per max_retries.
+    "retry_on_voicemail": True,
+    # Failed-to-connect redial is opt-in (often a permanent number problem).
+    "retry_on_failed": False,
 }
 
 # Default calling window applied to NEW campaigns created without an explicit

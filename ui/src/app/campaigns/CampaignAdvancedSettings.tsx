@@ -43,6 +43,8 @@ export interface CampaignAdvancedSettingsProps {
     onRetryOnNoAnswerChange: (value: boolean) => void;
     retryOnVoicemail: boolean;
     onRetryOnVoicemailChange: (value: boolean) => void;
+    retryOnFailed: boolean;
+    onRetryOnFailedChange: (value: boolean) => void;
     // Voicemail / IVR hangup
     hangupOnVoicemail: boolean;
     onHangupOnVoicemailChange: (value: boolean) => void;
@@ -116,6 +118,7 @@ export default function CampaignAdvancedSettings({
     retryDelaySeconds, onRetryDelaySecondsChange,
     retryOnBusy, onRetryOnBusyChange, retryOnNoAnswer, onRetryOnNoAnswerChange,
     retryOnVoicemail, onRetryOnVoicemailChange,
+    retryOnFailed, onRetryOnFailedChange,
     hangupOnVoicemail, onHangupOnVoicemailChange,
     scheduleEnabled, onScheduleEnabledChange, scheduleTimezone, onScheduleTimezoneChange,
     timeSlots, onTimeSlotsChange,
@@ -213,6 +216,10 @@ export default function CampaignAdvancedSettings({
                                 <div className="flex items-center justify-between">
                                     <span className="text-sm">Voicemail</span>
                                     <Switch checked={retryOnVoicemail} onCheckedChange={onRetryOnVoicemailChange} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm">Failed to connect</span>
+                                    <Switch checked={retryOnFailed} onCheckedChange={onRetryOnFailedChange} />
                                 </div>
                             </div>
                         </div>

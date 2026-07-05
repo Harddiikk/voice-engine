@@ -73,6 +73,7 @@ export default function NewCampaignPage() {
     const [retryOnBusy, setRetryOnBusy] = useState(true);
     const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
     const [retryOnVoicemail, setRetryOnVoicemail] = useState(true);
+    const [retryOnFailed, setRetryOnFailed] = useState(false);
     // Hang up on voicemail / IVR — default ON to match the platform's
     // default-on voicemail detection (saves credits on answering machines).
     const [hangupOnVoicemail, setHangupOnVoicemail] = useState(true);
@@ -169,7 +170,7 @@ export default function NewCampaignPage() {
                 if (typeof capacity === 'number') setDefaultChannelCapacity(capacity);
 
                 const last = (response.data as { last_campaign_settings?: {
-                    retry_config?: { enabled: boolean; max_retries: number; retry_delay_seconds: number; retry_on_busy: boolean; retry_on_no_answer: boolean; retry_on_voicemail: boolean };
+                    retry_config?: { enabled: boolean; max_retries: number; retry_delay_seconds: number; retry_on_busy: boolean; retry_on_no_answer: boolean; retry_on_voicemail: boolean; retry_on_failed?: boolean };
                     max_concurrency?: number | null;
                     schedule_config?: { enabled: boolean; timezone: string; slots: TimeSlot[] } | null;
                     circuit_breaker?: { enabled: boolean; failure_threshold: number; window_seconds: number; min_calls_in_window: number } | null;
@@ -185,6 +186,7 @@ export default function NewCampaignPage() {
                         setRetryOnBusy(last.retry_config.retry_on_busy);
                         setRetryOnNoAnswer(last.retry_config.retry_on_no_answer);
                         setRetryOnVoicemail(last.retry_config.retry_on_voicemail);
+                        setRetryOnFailed(last.retry_config.retry_on_failed ?? false);
                     } else {
                         const retryConfig = response.data.default_retry_config;
                         setRetryEnabled(retryConfig.enabled);
@@ -193,6 +195,7 @@ export default function NewCampaignPage() {
                         setRetryOnBusy(retryConfig.retry_on_busy);
                         setRetryOnNoAnswer(retryConfig.retry_on_no_answer);
                         setRetryOnVoicemail(retryConfig.retry_on_voicemail);
+                        setRetryOnFailed((retryConfig as { retry_on_failed?: boolean }).retry_on_failed ?? false);
                     }
                     if (last.max_concurrency) {
                         setMaxConcurrency(String(last.max_concurrency));
@@ -220,6 +223,7 @@ export default function NewCampaignPage() {
                     setRetryOnBusy(retryConfig.retry_on_busy);
                     setRetryOnNoAnswer(retryConfig.retry_on_no_answer);
                     setRetryOnVoicemail(retryConfig.retry_on_voicemail);
+                    setRetryOnFailed((retryConfig as { retry_on_failed?: boolean }).retry_on_failed ?? false);
                 }
             }
         } catch (error) {
@@ -293,6 +297,7 @@ export default function NewCampaignPage() {
                 retry_on_busy: retryOnBusy,
                 retry_on_no_answer: retryOnNoAnswer,
                 retry_on_voicemail: retryOnVoicemail,
+                retry_on_failed: retryOnFailed,
             };
 
             // Build schedule_config if enabled
@@ -570,6 +575,8 @@ export default function NewCampaignPage() {
                                         onRetryOnNoAnswerChange={setRetryOnNoAnswer}
                                         retryOnVoicemail={retryOnVoicemail}
                                         onRetryOnVoicemailChange={setRetryOnVoicemail}
+                                        retryOnFailed={retryOnFailed}
+                                        onRetryOnFailedChange={setRetryOnFailed}
                                         hangupOnVoicemail={hangupOnVoicemail}
                                         onHangupOnVoicemailChange={setHangupOnVoicemail}
                                         scheduleEnabled={scheduleEnabled}

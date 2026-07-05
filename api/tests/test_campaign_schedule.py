@@ -213,3 +213,42 @@ class TestDefaultScheduleConfig:
             assert time_re.match(slot["start_time"])
             assert time_re.match(slot["end_time"])
             assert slot["start_time"] != slot["end_time"]
+
+
+class TestNextWindowStart:
+    """Phase 3: clamp a retry's scheduled_for into the calling window."""
+
+    def _sched(self):
+        # Mon-Sun 09:00-21:00 in UTC (use UTC to keep the math obvious).
+        return {
+            "enabled": True,
+            "timezone": "UTC",
+            "slots": [_slot(d, "09:00", "21:00") for d in range(7)],
+        }
+
+    def test_in_window_returns_after_unchanged(self):
+        from api.services.campaign.schedule import next_window_start
+
+        after = datetime(2026, 7, 6, 10, 0, tzinfo=UTC)  # Monday 10:00
+        assert next_window_start(self._sched(), after) == after
+
+    def test_before_window_pushed_to_open(self):
+        from api.services.campaign.schedule import next_window_start
+
+        after = datetime(2026, 7, 6, 6, 0, tzinfo=UTC)  # Monday 06:00 (quiet)
+        result = next_window_start(self._sched(), after)
+        assert result.hour == 9 and result.minute == 0 and result.day == 6
+
+    def test_after_window_pushed_to_next_day_open(self):
+        from api.services.campaign.schedule import next_window_start
+
+        after = datetime(2026, 7, 6, 22, 0, tzinfo=UTC)  # Monday 22:00 (quiet)
+        result = next_window_start(self._sched(), after)
+        assert result.hour == 9 and result.day == 7  # Tuesday 09:00
+
+    def test_no_schedule_is_fail_open(self):
+        from api.services.campaign.schedule import next_window_start
+
+        after = datetime(2026, 7, 6, 3, 0, tzinfo=UTC)
+        assert next_window_start(None, after) == after
+        assert next_window_start({"enabled": False}, after) == after

@@ -32,7 +32,7 @@ from api.services.campaign.campaign_event_protocol import (
 )
 from api.services.campaign.campaign_event_publisher import CampaignEventPublisher
 from api.services.campaign.circuit_breaker import circuit_breaker
-from api.services.campaign.schedule import is_within_schedule
+from api.services.campaign.schedule import is_within_schedule, next_window_start
 from api.tasks.arq import enqueue_job
 from api.tasks.function_names import FunctionNames
 
@@ -207,6 +207,9 @@ class CampaignOrchestrator:
         if reason == "voicemail" and not retry_config.get("retry_on_voicemail", True):
             logger.info(f"campaign_id: {campaign_id} - Skipping retry for voicemail")
             return
+        if reason == "failed" and not retry_config.get("retry_on_failed", False):
+            logger.info(f"campaign_id: {campaign_id} - Skipping retry for failed call")
+            return
 
         # Get the original queued run
         queued_run = await db_client.get_queued_run_by_id(event.queued_run_id)
@@ -225,17 +228,22 @@ class CampaignOrchestrator:
             )
             return
 
-        # Create scheduled retry entry
+        # Create scheduled retry entry, clamped into the calling window.
         retry_delay = retry_config.get("retry_delay_seconds", 120)
-        await self._schedule_retry(queued_run, reason, retry_delay)
+        schedule_config = (campaign.orchestrator_metadata or {}).get("schedule_config")
+        await self._schedule_retry(queued_run, reason, retry_delay, schedule_config)
 
         # Update last activity
         self._last_activity[campaign_id] = datetime.now(UTC)
 
     async def _schedule_retry(
-        self, original_run: QueuedRunModel, reason: str, delay_seconds: int
+        self,
+        original_run: QueuedRunModel,
+        reason: str,
+        delay_seconds: int,
+        schedule_config: dict | None = None,
     ):
-        """Create a new queued run for retry."""
+        """Create a new queued run for retry, clamped into the calling window."""
 
         campaign_id = original_run.campaign_id
 
@@ -247,9 +255,19 @@ class CampaignOrchestrator:
             "retry_reason": reason,
         }
 
+        # Base due-time = now + delay; then push forward to the next in-window
+        # instant so the retry doesn't sit due during quiet hours (the dispatcher
+        # claims due-first, so an in-window scheduled_for is picked up promptly
+        # when the window opens).
+        scheduled_for = next_window_start(
+            schedule_config,
+            datetime.now(UTC) + timedelta(seconds=delay_seconds),
+            campaign_id=campaign_id,
+        )
+
         logger.debug(
-            f"campaign_id: {campaign_id} - Scheduling retry for {reason} in {delay_seconds}s, "
-            f"retry attempt {original_run.retry_count + 1}"
+            f"campaign_id: {campaign_id} - Scheduling retry for {reason} in {delay_seconds}s "
+            f"(due {scheduled_for.isoformat()}), retry attempt {original_run.retry_count + 1}"
         )
 
         # Create retry entry with unique source_uuid
@@ -260,7 +278,7 @@ class CampaignOrchestrator:
             state="queued",
             retry_count=original_run.retry_count + 1,
             parent_queued_run_id=original_run.id,
-            scheduled_for=datetime.now(UTC) + timedelta(seconds=delay_seconds),
+            scheduled_for=scheduled_for,
             retry_reason=reason,
         )
 

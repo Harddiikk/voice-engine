@@ -119,6 +119,9 @@ class RetryConfigRequest(BaseModel):
     retry_on_busy: bool = True
     retry_on_no_answer: bool = True
     retry_on_voicemail: bool = True
+    # Off by default — a failed-to-connect call is often a permanent number
+    # problem, so re-dialing is opt-in per campaign.
+    retry_on_failed: bool = False
 
 
 class RetryConfigResponse(BaseModel):
@@ -128,6 +131,7 @@ class RetryConfigResponse(BaseModel):
     retry_on_busy: bool
     retry_on_no_answer: bool
     retry_on_voicemail: bool
+    retry_on_failed: bool = False
 
 
 class TimeSlotRequest(BaseModel):
