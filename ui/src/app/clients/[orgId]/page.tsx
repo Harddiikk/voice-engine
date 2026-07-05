@@ -171,6 +171,14 @@ export default function ClientDetailPage() {
   const [geminiKeyInput, setGeminiKeyInput] = useState("");
   const [savingGeminiKey, setSavingGeminiKey] = useState(false);
 
+  // Plan-card designer (what the client sees on their Credits page)
+  const [planTitle, setPlanTitle] = useState("");
+  const [planPrice, setPlanPrice] = useState("");
+  const [planMinutes, setPlanMinutes] = useState("");
+  const [planFeatures, setPlanFeatures] = useState("");
+  const [planExpiry, setPlanExpiry] = useState("");
+  const [savingPlanCard, setSavingPlanCard] = useState(false);
+
   // Pricing form
   const [perMinute, setPerMinute] = useState("");
   const [numberPrice, setNumberPrice] = useState("");
@@ -370,6 +378,89 @@ export default function ClientDetailPage() {
       toast.error(err instanceof Error ? err.message : "Failed to set balance");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Sync the plan-card form whenever the detail reloads.
+  useEffect(() => {
+    const card = detail?.plan_card;
+    setPlanTitle(card?.title ?? "");
+    setPlanPrice(card?.price_inr != null ? String(card.price_inr) : "");
+    setPlanMinutes(
+      card?.included_minutes != null ? String(card.included_minutes) : "",
+    );
+    setPlanFeatures((card?.features ?? []).join("\n"));
+    setPlanExpiry(
+      detail?.plan_expires_at ? detail.plan_expires_at.slice(0, 10) : "",
+    );
+  }, [detail?.plan_card, detail?.plan_expires_at]);
+
+  const planPriceNumber = Number(planPrice);
+  const planCardValid =
+    planTitle.trim().length > 0 &&
+    Number.isFinite(planPriceNumber) &&
+    planPriceNumber > 0 &&
+    (planMinutes.trim() === "" ||
+      (Number.isInteger(Number(planMinutes)) && Number(planMinutes) >= 0));
+
+  const onSavePlanCard = async () => {
+    if (!planCardValid) return;
+    setSavingPlanCard(true);
+    try {
+      const token = await getToken();
+      await updateAdminProfile(token, orgId, {
+        plan_card: {
+          title: planTitle.trim(),
+          price_inr: planPriceNumber,
+          included_minutes:
+            planMinutes.trim() === "" ? 0 : Number(planMinutes),
+          features: planFeatures
+            .split("\n")
+            .map((f) => f.trim())
+            .filter(Boolean),
+          enabled: true,
+        },
+      });
+      toast.success("Plan card saved — the client now sees this card");
+      await fetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save plan card");
+    } finally {
+      setSavingPlanCard(false);
+    }
+  };
+
+  const onRemovePlanCard = async () => {
+    setSavingPlanCard(true);
+    try {
+      const token = await getToken();
+      await updateAdminProfile(token, orgId, { plan_card: null });
+      toast.success("Plan card removed — the client sees the standard Credits page");
+      await fetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove plan card");
+    } finally {
+      setSavingPlanCard(false);
+    }
+  };
+
+  const onSavePlanExpiry = async () => {
+    setSavingPlanCard(true);
+    try {
+      const token = await getToken();
+      await updateAdminProfile(token, orgId, {
+        plan_expires_at: planExpiry
+          ? new Date(`${planExpiry}T23:59:59Z`).toISOString()
+          : null,
+      });
+      toast.success(
+        planExpiry ? `Plan expiry set to ${planExpiry}` : "Plan expiry cleared",
+      );
+      await fetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to set expiry");
+    } finally {
+      setSavingPlanCard(false);
     }
   };
 
@@ -1073,6 +1164,114 @@ export default function ClientDetailPage() {
                           </Button>
                         )}
                       </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="md:col-span-2">
+                    <CardHeader>
+                      <CardTitle>Client plan card</CardTitle>
+                      <CardDescription>
+                        Design the plan this client sees on their Credits page.
+                        When set, they see ONLY this card — name, price,
+                        features, expiry and a Purchase/Renew button (PayU).
+                        Expiry auto-suspends outbound calls until renewal.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="plan-title">Plan name</Label>
+                          <Input
+                            id="plan-title"
+                            value={planTitle}
+                            onChange={(e) => setPlanTitle(e.target.value)}
+                            placeholder="e.g. Enterprise"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="plan-price">Price (₹/month)</Label>
+                          <Input
+                            id="plan-price"
+                            type="number"
+                            min={1}
+                            step="any"
+                            value={planPrice}
+                            onChange={(e) => setPlanPrice(e.target.value)}
+                            placeholder="e.g. 25000"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="plan-minutes">
+                            Included minutes / month
+                          </Label>
+                          <Input
+                            id="plan-minutes"
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={planMinutes}
+                            onChange={(e) => setPlanMinutes(e.target.value)}
+                            placeholder="e.g. 3000"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="plan-features">
+                          Features (one per line)
+                        </Label>
+                        <Textarea
+                          id="plan-features"
+                          rows={3}
+                          value={planFeatures}
+                          onChange={(e) => setPlanFeatures(e.target.value)}
+                          placeholder={"Unlimited agents\nPriority support\nDedicated number"}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-end gap-3">
+                        <Button
+                          onClick={onSavePlanCard}
+                          disabled={savingPlanCard || !planCardValid}
+                        >
+                          {savingPlanCard && (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          )}
+                          {detail.plan_card ? "Update plan card" : "Set plan card"}
+                        </Button>
+                        {detail.plan_card && (
+                          <Button
+                            variant="outline"
+                            onClick={onRemovePlanCard}
+                            disabled={savingPlanCard}
+                          >
+                            Remove card
+                          </Button>
+                        )}
+                        <div className="ml-auto flex items-end gap-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="plan-expiry">Plan expires</Label>
+                            <Input
+                              id="plan-expiry"
+                              type="date"
+                              value={planExpiry}
+                              onChange={(e) => setPlanExpiry(e.target.value)}
+                              className="w-[160px]"
+                            />
+                          </div>
+                          <Button
+                            variant="outline"
+                            onClick={onSavePlanExpiry}
+                            disabled={savingPlanCard}
+                          >
+                            Set expiry
+                          </Button>
+                        </div>
+                      </div>
+                      {detail.plan_expires_at && (
+                        <p className="text-xs text-muted-foreground">
+                          Current expiry: {formatTimestamp(detail.plan_expires_at)}{" "}
+                          — renewal payments extend it by 30 days.
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
 

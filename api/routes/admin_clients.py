@@ -19,6 +19,7 @@ from api.db import db_client
 from api.db.credit_ledger_client import ALREADY_APPLIED, UNMETERED
 from api.db.models import OrganizationModel, UserModel
 from api.schemas.admin_clients import (
+    AdminPlanCard,
     AddNoteRequest,
     AdminAuditItem,
     AdminAuditListResponse,
@@ -805,10 +806,23 @@ async def get_client_detail(
         suspended=bool(profile.get("suspended")),
         show_dograh_voice=bool(profile.get("show_dograh_voice")),
         has_gemini_key=bool(profile.get("gemini_api_key")),
+        plan_card=_plan_card_or_none(profile),
+        plan_expires_at=profile.get("plan_expires_at"),
         notes=list(profile.get("notes") or []),
         kyc=kyc,
         usage=usage,
     )
+
+
+def _plan_card_or_none(profile: dict):
+    """Parse the stored plan-card dict; tolerate legacy/invalid shapes as None."""
+    raw = profile.get("plan_card")
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return AdminPlanCard(**raw)
+    except Exception:
+        return None
 
 
 @router.patch("/{org_id}/profile", response_model=AdminProfileResponse)
@@ -830,17 +844,29 @@ async def update_client_profile(
     if not changes:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    # The plan card arrives as a Pydantic model; the profile stores plain JSON.
+    if changes.get("plan_card") is not None:
+        changes["plan_card"] = changes["plan_card"].model_dump()
+
     # Forward only the fields the caller actually sent, so unset fields keep
     # their current value (the sentinel default in update_admin_profile).
     await update_admin_profile(org_id, **changes)
 
+    # Never write the raw Gemini key into the audit log — record presence only.
+    audit_changes = dict(changes)
+    if "gemini_api_key" in audit_changes:
+        audit_changes["gemini_api_key"] = (
+            "<set>" if (audit_changes["gemini_api_key"] or "").strip() else "<cleared>"
+        )
     await record_admin_action(
         actor_user_id=user.id,
         target_organization_id=org_id,
         action="update_profile",
-        detail=changes,
+        detail=audit_changes,
     )
-    logger.info(f"Superuser {user.id} updated profile for org {org_id}: {changes}")
+    logger.info(
+        f"Superuser {user.id} updated profile for org {org_id}: {audit_changes}"
+    )
 
     profile = await get_admin_profile(org_id)
     plan = await get_org_plan(org_id)
@@ -854,6 +880,8 @@ async def update_client_profile(
         suspended=bool(profile.get("suspended")),
         show_dograh_voice=bool(profile.get("show_dograh_voice")),
         has_gemini_key=bool(profile.get("gemini_api_key")),
+        plan_card=_plan_card_or_none(profile),
+        plan_expires_at=profile.get("plan_expires_at"),
     )
 
 

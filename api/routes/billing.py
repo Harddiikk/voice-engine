@@ -17,7 +17,11 @@ from pydantic import BaseModel
 from api.constants import CREDIT_PACKS, RAZORPAY_KEY_ID, UI_APP_URL
 from api.db import db_client
 from api.db.models import UserModel
-from api.services.admin.profile import get_org_money
+from api.services.admin.profile import (
+    extend_plan_month,
+    get_org_money,
+    get_org_plan_state,
+)
 from api.services.auth.depends import get_superuser, get_user
 from api.services.billing import payu_client, razorpay_client
 from api.services.plans import features_for_plan, get_org_plan
@@ -202,6 +206,87 @@ async def list_ledger(
     ]
 
 
+# ======== Client plan card (admin-designed monthly plan) ========
+
+
+@router.get("/plan")
+async def get_client_plan(user: UserModel = Depends(get_user)):
+    """The org's admin-designed plan card + expiry state, for the Credits page.
+
+    When ``enabled`` the client UI shows ONLY this card (no packs/credit
+    internals): title, price, features, expiry, and a Purchase/Renew button.
+    ``warn`` turns on the renewal banner (≤5 days left); ``expired`` means
+    outbound calling is paused until renewal.
+    """
+    org = _org(user)
+    state = await get_org_plan_state(org)
+    card = state["card"] or {}
+    return {
+        "enabled": state["enabled"],
+        "title": card.get("title"),
+        "price_inr": card.get("price_inr"),
+        "included_minutes": card.get("included_minutes"),
+        "features": card.get("features") or [],
+        "expires_at": state["expires_at"].isoformat() if state["expires_at"] else None,
+        "days_left": state["days_left"],
+        "warn": state["warn"],
+        "expired": state["expired"],
+        "configured": payu_client.is_configured(),
+    }
+
+
+@router.post("/plan/initiate")
+async def plan_initiate(user: UserModel = Depends(get_user)):
+    """PayU Hosted Checkout for the org's plan card (purchase or renewal).
+
+    Reuses the pack pipeline: the transaction carries pack_id="plan" and the
+    card's included minutes as seconds; the callback credits the minutes AND
+    extends the plan expiry by one cycle. Amount always comes from the
+    SERVER-stored card, never the client.
+    """
+    org = _org(user)
+    if not payu_client.is_configured():
+        raise HTTPException(status_code=503, detail="payments_not_configured")
+
+    state = await get_org_plan_state(org)
+    if not state["enabled"]:
+        raise HTTPException(status_code=400, detail="no_plan_card")
+    card = state["card"]
+    price_inr = card.get("price_inr")
+    if not price_inr or float(price_inr) <= 0:
+        raise HTTPException(status_code=400, detail="plan_card_has_no_price")
+
+    included_minutes = int(card.get("included_minutes") or 0)
+    amount = f"{float(price_inr):.2f}"
+    txnid = "a4yplan" + uuid4().hex[:16]
+
+    await db_client.create_transaction(
+        organization_id=org,
+        created_by=user.id,
+        razorpay_order_id=txnid,
+        pack_id="plan",
+        seconds=included_minutes * 60,
+        amount_paise=int(round(float(price_inr) * 100)),
+    )
+
+    firstname, email, phone = _payu_customer_fields(user)
+    backend_endpoint, _ = await get_backend_endpoints()
+    callback = f"{backend_endpoint}/api/v1/billing/payu/callback"
+    params = payu_client.build_payment_params(
+        txnid=txnid,
+        amount=amount,
+        productinfo=(card.get("title") or "Monthly plan")[:100],
+        firstname=firstname,
+        email=email,
+        phone=phone,
+        surl=callback,
+        furl=callback,
+        udf1=str(org),
+        udf2="plan",
+    )
+    return {"payment_url": payu_client.payment_url(), "params": params}
+
+
 # ======== PayU Hosted Checkout ========
 
 
@@ -343,6 +428,15 @@ async def _apply_payu_payment(params: dict) -> str:
         )
         if outcome == "already":
             return "already"
+        # Plan purchase/renewal: also extend the plan expiry by one cycle. The
+        # paid-CAS above guarantees exactly one caller reaches this per txn
+        # (callback + webhook can race; only the CAS winner extends).
+        if getattr(txn, "pack_id", None) == "plan":
+            new_expiry = await extend_plan_month(txn.organization_id, txnid=txnid)
+            logger.info(
+                f"Plan renewed: org {txn.organization_id} until {new_expiry} "
+                f"(txnid {txnid})"
+            )
         logger.info(
             f"PayU payment ok: org {txn.organization_id} +{txn.seconds}s "
             f"(txnid {txnid}, outcome={outcome})"

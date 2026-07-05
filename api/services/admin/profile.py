@@ -7,7 +7,7 @@ existing clients behave exactly as before until an admin customizes them.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -48,6 +48,8 @@ async def update_admin_profile(
     suspended: Any = _UNSET,
     show_dograh_voice: Any = _UNSET,
     gemini_api_key: Any = _UNSET,
+    plan_card: Any = _UNSET,
+    plan_expires_at: Any = _UNSET,
 ) -> dict:
     """Partial update — only the passed fields change. Pass ``None`` to clear a
     pricing/plan override back to the default; omit to leave unchanged."""
@@ -71,6 +73,18 @@ async def update_admin_profile(
             profile["gemini_api_key"] = key
         else:
             profile.pop("gemini_api_key", None)
+    if plan_card is not _UNSET:
+        # Admin-designed client plan card (dict) — None/empty clears it.
+        if plan_card:
+            profile["plan_card"] = dict(plan_card)
+        else:
+            profile.pop("plan_card", None)
+    if plan_expires_at is not _UNSET:
+        # ISO timestamp; None clears (plan becomes "never purchased").
+        if plan_expires_at:
+            profile["plan_expires_at"] = str(plan_expires_at)
+        else:
+            profile.pop("plan_expires_at", None)
     for key, val in (
         ("per_minute_inr", per_minute_inr),
         ("number_price_inr", number_price_inr),
@@ -130,10 +144,79 @@ async def get_org_pricing(organization_id: int) -> dict:
     return pricing_from_profile(await get_admin_profile(organization_id))
 
 
+# One plan cycle. Renewals extend from the current expiry (or now if lapsed).
+PLAN_PERIOD_DAYS = 30
+
+# Client renewal banner starts this many days before expiry.
+PLAN_WARN_DAYS = 5
+
+
+def plan_state(profile: dict) -> dict:
+    """The org's plan-card state: card config + expiry/warn/expired flags.
+
+    ``expired`` is True only when a card is enabled AND an expiry exists AND it
+    has passed — an enabled card with NO expiry means "never purchased yet"
+    (warn in UI, but don't suspend; the credit wallet still gates calls).
+    """
+    card = profile.get("plan_card") or None
+    enabled = bool(card and card.get("enabled", True))
+    expires_raw = profile.get("plan_expires_at")
+    expires_at: Optional[datetime] = None
+    if isinstance(expires_raw, str) and expires_raw:
+        try:
+            expires_at = datetime.fromisoformat(expires_raw)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+        except ValueError:
+            expires_at = None
+    days_left = None
+    expired = False
+    if enabled and expires_at is not None:
+        remaining = expires_at - datetime.now(UTC)
+        days_left = max(0, remaining.days) if remaining.total_seconds() > 0 else 0
+        expired = remaining.total_seconds() <= 0
+    return {
+        "enabled": enabled,
+        "card": card if enabled else None,
+        "expires_at": expires_at,
+        "days_left": days_left,
+        "expired": expired,
+        "warn": bool(
+            enabled
+            and days_left is not None
+            and not expired
+            and days_left <= PLAN_WARN_DAYS
+        ),
+    }
+
+
+async def get_org_plan_state(organization_id: int) -> dict:
+    return plan_state(await get_admin_profile(organization_id))
+
+
+async def extend_plan_month(organization_id: int, *, txnid: str) -> datetime:
+    """Activate/renew the org's plan for one cycle (idempotency handled by the
+    caller via the payment CAS). Extends from the current expiry when renewing
+    early, from now when lapsed/first purchase. Records the paying txnid."""
+    profile = await get_admin_profile(organization_id)
+    state = plan_state(profile)
+    now = datetime.now(UTC)
+    base = state["expires_at"] if state["expires_at"] and state["expires_at"] > now else now
+    new_expiry = base + timedelta(days=PLAN_PERIOD_DAYS)
+    profile["plan_expires_at"] = new_expiry.isoformat()
+    profile["plan_last_txnid"] = txnid
+    await _save_admin_profile(organization_id, profile)
+    return new_expiry
+
+
 async def is_org_suspended(organization_id: Optional[int]) -> bool:
+    """Manual admin suspend OR an expired monthly plan (auto-lifts on renewal)."""
     if organization_id is None:
         return False
-    return bool((await get_admin_profile(organization_id)).get("suspended"))
+    profile = await get_admin_profile(organization_id)
+    if profile.get("suspended"):
+        return True
+    return plan_state(profile)["expired"]
 
 
 # "Today" for spend is a calendar day in the deployment's local zone (India),

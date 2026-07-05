@@ -75,6 +75,16 @@ export interface AdminClientPricing {
   custom?: Record<string, boolean> | null;
 }
 
+// Admin-designed plan card shown to the client on their Credits page. When
+// enabled the client sees ONLY this card (no packs/credit internals).
+export interface AdminPlanCard {
+  title: string;
+  price_inr: number;
+  included_minutes: number;
+  features: string[];
+  enabled: boolean;
+}
+
 export interface AdminClientVoiceLink {
   status?: string | null;
   client_id?: string | null;
@@ -108,6 +118,9 @@ export interface AdminClientDetail {
   // True when a per-client Gemini key override is set (key itself never sent);
   // false = client uses the shared platform Gemini key.
   has_gemini_key?: boolean;
+  // Client plan card + expiry (null = no card / never purchased).
+  plan_card?: AdminPlanCard | null;
+  plan_expires_at?: string | null;
   notes?: AdminClientNote[] | null;
   voicelink?: AdminClientVoiceLink | null;
   kyc?: AdminClientKycStatus | null;
@@ -126,6 +139,10 @@ export interface AdminProfilePatch {
   show_dograh_voice?: boolean;
   // Per-client Gemini key override; "" clears it back to the platform key.
   gemini_api_key?: string;
+  // Client plan card; null removes the card.
+  plan_card?: AdminPlanCard | null;
+  // ISO timestamp; null clears back to "never purchased".
+  plan_expires_at?: string | null;
 }
 
 export interface ChargeSetupFeeResult {

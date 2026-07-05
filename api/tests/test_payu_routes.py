@@ -44,6 +44,8 @@ async def test_balance_carries_money_fields(monkeypatch):
                 "money_left_inr": 16000.0,
                 "spent_seconds": 23610,
                 "money_spent_inr": 3148.0,
+                "spent_today_seconds": 0,
+                "money_spent_today_inr": 0.0,
             }
         ),
     )
@@ -79,6 +81,8 @@ async def test_balance_money_left_none_when_unlimited(monkeypatch):
                 "money_left_inr": None,
                 "spent_seconds": 0,
                 "money_spent_inr": 0.0,
+                "spent_today_seconds": 0,
+                "money_spent_today_inr": 0.0,
             }
         ),
     )

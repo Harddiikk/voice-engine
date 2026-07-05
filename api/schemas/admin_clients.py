@@ -263,6 +263,25 @@ class AdminClientUsage(BaseModel):
     money_spent_inr: float = 0.0
 
 
+class AdminPlanCard(BaseModel):
+    """Admin-designed plan card shown to the client on their Credits page.
+
+    When enabled, the client sees ONLY this card (no packs/credit internals):
+    title, price, features, expiry + a Purchase/Renew button through PayU.
+    """
+
+    title: str = Field(..., min_length=1, max_length=100)
+    price_inr: float = Field(..., gt=0, le=10_000_000)
+    included_minutes: int = Field(default=0, ge=0, le=1_000_000)
+    features: List[str] = Field(default_factory=list, max_length=20)
+    enabled: bool = True
+
+    @field_validator("features")
+    @classmethod
+    def strip_features(cls, v: List[str]) -> List[str]:
+        return [f.strip() for f in v if f and f.strip()][:20]
+
+
 class AdminClientDetailResponse(BaseModel):
     """Full per-client admin view (identity + plan + pricing + money + KYC)."""
 
@@ -293,6 +312,9 @@ class AdminClientDetailResponse(BaseModel):
     # True when a per-client Gemini key override is set (the key itself is never
     # returned); False = this client uses the shared platform Gemini key.
     has_gemini_key: bool = False
+    # Client plan card + expiry (None = no card / never purchased).
+    plan_card: Optional[AdminPlanCard] = None
+    plan_expires_at: Optional[str] = None
     notes: List[AdminNote] = Field(default_factory=list)
     kyc: AdminKycStatusResponse
     # Omitted (null) if the usage rollup could not be computed.
@@ -314,6 +336,10 @@ class AdminProfileUpdateRequest(BaseModel):
     # Per-client Gemini API key override (overrides the shared platform key);
     # empty string clears it back to the platform key. Never returned.
     gemini_api_key: Optional[str] = None
+    # Client plan card (send null to remove the card).
+    plan_card: Optional[AdminPlanCard] = None
+    # Plan expiry (ISO timestamp); null clears back to "never purchased".
+    plan_expires_at: Optional[str] = None
 
     @field_validator("plan_override")
     @classmethod

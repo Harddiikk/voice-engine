@@ -49,6 +49,21 @@ interface Balance {
   money_spent_today_inr?: number;
 }
 
+// Admin-designed plan card (GET /billing/plan). When enabled the client sees
+// ONLY this card — no packs or enterprise CTA.
+interface ClientPlan {
+  enabled: boolean;
+  title?: string | null;
+  price_inr?: number | null;
+  included_minutes?: number | null;
+  features?: string[];
+  expires_at?: string | null;
+  days_left?: number | null;
+  warn?: boolean;
+  expired?: boolean;
+  configured?: boolean;
+}
+
 interface LedgerEntry {
   id: number;
   kind: string;
@@ -98,6 +113,7 @@ export function CreditsSection() {
   const { user, loading: authLoading } = useAuth();
   const { openEnterprise } = useLeadForms();
   const [data, setData] = useState<Balance | null>(null);
+  const [plan, setPlan] = useState<ClientPlan | null>(null);
   const [ledger, setLedger] = useState<LedgerEntry[] | null>(null);
   const [showHolds, setShowHolds] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -129,6 +145,12 @@ export function CreditsSection() {
       /* ignore */
     }
     try {
+      const res = await client.get({ url: "/api/v1/billing/plan" });
+      setPlan(res.data as ClientPlan);
+    } catch {
+      /* plan card is additive — fall back to the standard packs view */
+    }
+    try {
       const res = await client.get({ url: "/api/v1/billing/ledger?limit=100" });
       if (Array.isArray(res.data)) setLedger(res.data as LedgerEntry[]);
     } catch {
@@ -157,7 +179,25 @@ export function CreditsSection() {
     }
   }
 
+  async function renewPlan() {
+    setBusy("plan");
+    try {
+      const res = await client.post({ url: "/api/v1/billing/plan/initiate" });
+      if (res.error) throw new Error("initiate_failed");
+      const { payment_url, params } = res.data as {
+        payment_url: string;
+        params: Record<string, string>;
+      };
+      submitToPayU(payment_url, params);
+    } catch {
+      toast.error("Couldn't start checkout");
+      setBusy(null);
+    }
+  }
+
   if (!data) return <p className="text-sm text-muted-foreground">Loading...</p>;
+
+  const hasPlanCard = plan?.enabled === true;
 
   const minutes =
     data.balance_seconds == null ? null : Math.floor(data.balance_seconds / 60);
@@ -167,12 +207,29 @@ export function CreditsSection() {
 
   return (
     <div className="space-y-6">
+      {/* Plan renewal banner: 5-day warning, then expired (calls paused). */}
+      {hasPlanCard && plan?.expired && (
+        <div className="rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <span className="font-semibold">Your plan has expired.</span> Outbound
+          calling is paused — renew below to resume immediately.
+        </div>
+      )}
+      {hasPlanCard && !plan?.expired && plan?.warn && (
+        <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          <span className="font-semibold">
+            Your plan expires in {plan?.days_left}{" "}
+            {plan?.days_left === 1 ? "day" : "days"}.
+          </span>{" "}
+          Please renew below to avoid any interruption.
+        </div>
+      )}
+
       <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-[var(--shadow-card)]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-small text-muted-foreground">Current balance</p>
           {!data.unlimited && (
             <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
-              {planLabel} plan
+              {hasPlanCard ? plan?.title : `${planLabel} plan`}
             </span>
           )}
         </div>
@@ -218,7 +275,90 @@ export function CreditsSection() {
         )}
       </div>
 
-      {data.unlimited ? (
+      {hasPlanCard ? (
+        /* Admin-designed plan card — the ONLY purchase surface for this org. */
+        <div
+          className={cn(
+            "relative rounded-2xl border bg-card p-6 shadow-[var(--shadow-pop)]",
+            plan?.expired
+              ? "border-destructive/50 ring-1 ring-destructive/20"
+              : "border-primary/50 ring-1 ring-primary/20",
+          )}
+        >
+          <span className="absolute -top-2.5 left-6 whitespace-nowrap rounded-full bg-primary px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground shadow-[var(--shadow-card)]">
+            Your plan
+          </span>
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-xl font-semibold text-foreground">
+                {plan?.title}
+              </p>
+              <p className="mt-2 text-3xl font-semibold tabular text-foreground">
+                ₹{(plan?.price_inr ?? 0).toLocaleString("en-IN")}
+                <span className="text-sm font-normal text-muted-foreground">
+                  {" "}
+                  / month
+                </span>
+              </p>
+              {(plan?.included_minutes ?? 0) > 0 && (
+                <p className="mt-1 text-sm text-muted-foreground tabular">
+                  Includes {(plan?.included_minutes ?? 0).toLocaleString()}{" "}
+                  calling minutes every month
+                </p>
+              )}
+              {(plan?.features?.length ?? 0) > 0 && (
+                <ul className="mt-4 space-y-2 text-[13px] leading-snug">
+                  {plan?.features?.map((item) => (
+                    <li
+                      key={item}
+                      className="flex items-start gap-2 text-muted-foreground"
+                    >
+                      <Check
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary"
+                        aria-hidden="true"
+                      />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+              {plan?.expires_at ? (
+                <p className="text-xs text-muted-foreground">
+                  {plan?.expired ? "Expired" : "Active until"}{" "}
+                  <span className="font-medium text-foreground">
+                    {new Date(plan.expires_at).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}
+                  </span>
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Not activated yet
+                </p>
+              )}
+              <Button
+                variant="brand"
+                className="w-full sm:w-auto"
+                disabled={busy === "plan" || plan?.configured === false}
+                onClick={renewPlan}
+              >
+                {busy === "plan"
+                  ? "Opening…"
+                  : plan?.expires_at
+                    ? "Renew plan"
+                    : "Purchase plan"}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Secure checkout via PayU
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : data.unlimited ? (
         <p className="text-sm text-muted-foreground">
           Your account has unlimited calling — no top-up needed.
         </p>
@@ -344,7 +484,10 @@ export function CreditsSection() {
         </div>
       )}
 
-      {/* Enterprise — custom pricing / committed volume: contact + book a meeting */}
+      {/* Enterprise — custom pricing / committed volume: contact + book a meeting.
+          Hidden when the org has an admin-designed plan card (their plan IS the
+          custom deal — nothing else to upsell). */}
+      {!hasPlanCard && (
       <div className="rounded-2xl border border-primary/30 bg-primary/5 p-5 shadow-[var(--shadow-card)]">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -379,6 +522,7 @@ export function CreditsSection() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Billing history — every credit movement, newest first. Hold/release
           bookkeeping pairs are collapsed behind a toggle; the net per-call
