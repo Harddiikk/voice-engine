@@ -1,7 +1,7 @@
 """Request/response schemas for the superuser admin Clients endpoints."""
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -315,6 +315,10 @@ class AdminClientDetailResponse(BaseModel):
     # Client plan card + expiry (None = no card / never purchased).
     plan_card: Optional[AdminPlanCard] = None
     plan_expires_at: Optional[str] = None
+    # What the client filled during first-run onboarding (ONBOARDING_PROFILE
+    # org config): company, business_type, role, use_case, call volume, etc.
+    # None when they haven't onboarded.
+    onboarding_profile: Optional[Dict[str, Any]] = None
     notes: List[AdminNote] = Field(default_factory=list)
     kyc: AdminKycStatusResponse
     # Omitted (null) if the usage rollup could not be computed.

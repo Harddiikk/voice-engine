@@ -121,6 +121,8 @@ export interface AdminClientDetail {
   // Client plan card + expiry (null = no card / never purchased).
   plan_card?: AdminPlanCard | null;
   plan_expires_at?: string | null;
+  // What the client filled during first-run onboarding (or null).
+  onboarding_profile?: Record<string, unknown> | null;
   notes?: AdminClientNote[] | null;
   voicelink?: AdminClientVoiceLink | null;
   kyc?: AdminClientKycStatus | null;

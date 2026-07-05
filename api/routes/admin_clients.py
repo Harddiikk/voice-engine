@@ -18,6 +18,7 @@ from loguru import logger
 from api.db import db_client
 from api.db.credit_ledger_client import ALREADY_APPLIED, UNMETERED
 from api.db.models import OrganizationModel, UserModel
+from api.enums import OrganizationConfigurationKey
 from api.schemas.admin_clients import (
     AdminPlanCard,
     AddNoteRequest,
@@ -778,6 +779,12 @@ async def get_client_detail(
     pricing = await get_org_pricing(org_id)
     money = await get_org_money(org_id)
 
+    # What the client filled during first-run onboarding (ONBOARDING_PROFILE).
+    onboarding_raw = await db_client.get_configuration_value(
+        org_id, OrganizationConfigurationKey.ONBOARDING_PROFILE.value
+    )
+    onboarding_profile = onboarding_raw if isinstance(onboarding_raw, dict) else None
+
     try:
         kyc = await _resolve_kyc_status(org_id)
     except HTTPException:
@@ -808,6 +815,7 @@ async def get_client_detail(
         has_gemini_key=bool(profile.get("gemini_api_key")),
         plan_card=_plan_card_or_none(profile),
         plan_expires_at=profile.get("plan_expires_at"),
+        onboarding_profile=onboarding_profile,
         notes=list(profile.get("notes") or []),
         kyc=kyc,
         usage=usage,

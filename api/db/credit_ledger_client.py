@@ -552,7 +552,7 @@ class CreditLedgerClient(BaseDBClient):
     # Ledger kinds that represent money actually SPENT (usage + purchases), as
     # opposed to reservations/releases (which net out) or credits (topup/grant/
     # refund). Used for the "money spent" figure.
-    _SPEND_KINDS = ("settle_charge", "number_purchase", "setup_fee")
+    _SPEND_KINDS = ("settle_charge", "number_purchase", "setup_fee", "agent_build")
 
     async def sum_spent_seconds(
         self, organization_id: int, since: Optional[datetime] = None

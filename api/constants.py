@@ -62,6 +62,16 @@ GOOGLE_REDIRECT_URI = os.getenv(
 # = no managed Gemini (orgs fall back to their own saved/legacy config).
 PLATFORM_GEMINI_API_KEY = os.getenv("PLATFORM_GEMINI_API_KEY", "").strip() or None
 
+# Agent-builder (prompt -> agent generation) metering. Each successful
+# /agent-builder/generate charges this many credit-seconds (0 = free / no-op,
+# e.g. upstream OSS; set a real value on the SaaS). Calls are rate-limited
+# per-org to protect the platform LLM key regardless of the charge.
+AGENT_BUILD_CREDIT_SECONDS = int(os.getenv("AGENT_BUILD_CREDIT_SECONDS", "0"))
+AGENT_BUILD_RATE_LIMIT = int(os.getenv("AGENT_BUILD_RATE_LIMIT", "20"))
+AGENT_BUILD_RATE_WINDOW_SECONDS = int(
+    os.getenv("AGENT_BUILD_RATE_WINDOW_SECONDS", "3600")
+)
+
 # Rate limits (requests per 60s). Set any to 0 to disable that limiter.
 # login/signup are IP-keyed (signup also provisions a VoiceLink client, so it's
 # stricter); the public X-API-Key call-trigger surface is keyed per API key and

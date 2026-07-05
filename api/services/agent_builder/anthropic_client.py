@@ -213,6 +213,16 @@ def generate(prompt: str, business: Optional[Dict[str, Any]] = None) -> Dict[str
             stream_kwargs["output_config"] = {"effort": "high"}
         with client.messages.stream(**stream_kwargs) as stream:
             message = stream.get_final_message()
+        # Capture token usage for cost observability (charged as a flat credit
+        # at the route, not per-token).
+        usage = getattr(message, "usage", None)
+        if usage is not None:
+            logger.info(
+                f"Agent builder Claude usage ({CLAUDE_MODEL}): "
+                f"input={getattr(usage, 'input_tokens', '?')} "
+                f"output={getattr(usage, 'output_tokens', '?')} "
+                f"cache_read={getattr(usage, 'cache_read_input_tokens', '?')}"
+            )
     except Exception as e:  # noqa: BLE001 - any SDK/transport failure -> 502
         logger.error(f"Agent builder Claude request failed: {e}")
         raise AgentBuilderClaudeError(f"Claude request failed: {e}") from e

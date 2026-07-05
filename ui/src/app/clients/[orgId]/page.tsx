@@ -108,6 +108,24 @@ import { impersonateAsSuperadmin } from "@/lib/utils";
 
 const DERIVED = "__derived__";
 
+// Pretty labels for the ONBOARDING_PROFILE keys the client fills at first run.
+const ONBOARDING_LABELS: Record<string, string> = {
+  company: "Company / business",
+  source: "How they heard about us",
+  business_type: "Business type",
+  role: "Role",
+  monthly_revenue: "Monthly revenue",
+  use_case: "Main use case",
+  monthly_call_volume: "Expected monthly call volume",
+};
+
+function onboardingLabel(key: string): string {
+  return (
+    ONBOARDING_LABELS[key] ||
+    key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase())
+  );
+}
+
 /** A label/value row used across the overview cards. */
 function InfoRow({
   label,
@@ -993,6 +1011,43 @@ export default function ClientDetailPage() {
                       </CardContent>
                     </Card>
                   )}
+
+                  <Card className="md:col-span-2">
+                    <CardHeader>
+                      <CardTitle>Onboarding</CardTitle>
+                      <CardDescription>
+                        What this client filled in during first-run onboarding.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {(() => {
+                        const op = detail.onboarding_profile;
+                        const entries = op
+                          ? Object.entries(op).filter(
+                              ([k, v]) =>
+                                k !== "completed" &&
+                                k !== "skipped" &&
+                                v != null &&
+                                String(v).trim() !== "",
+                            )
+                          : [];
+                        if (!op || entries.length === 0) {
+                          return (
+                            <p className="text-sm text-muted-foreground">
+                              {op?.skipped
+                                ? "Client skipped onboarding."
+                                : "Client hasn't completed onboarding yet."}
+                            </p>
+                          );
+                        }
+                        return entries.map(([key, value]) => (
+                          <InfoRow key={key} label={onboardingLabel(key)}>
+                            {String(value)}
+                          </InfoRow>
+                        ));
+                      })()}
+                    </CardContent>
+                  </Card>
                 </div>
               </TabsContent>
 

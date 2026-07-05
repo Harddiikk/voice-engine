@@ -400,6 +400,13 @@ def test_client_detail_assembles_all_sections():
         db.get_organization_with_users = AsyncMock(return_value=_org())
         db.list_telephony_configurations_by_provider = AsyncMock(return_value=[])
         db.get_organization_overview = AsyncMock(return_value=overview)
+        db.get_configuration_value = AsyncMock(
+            return_value={
+                "completed": True,
+                "company": "Acme Corp",
+                "use_case": "Lead qualification",
+            }
+        )
 
         response = client.get("/admin/clients/5")
 
@@ -416,6 +423,8 @@ def test_client_detail_assembles_all_sections():
     assert body["usage"]["total_calls"] == 42
     assert body["usage"]["money_spent_inr"] == 6.0
     assert len(body["notes"]) == 1
+    # Onboarding answers surfaced from ONBOARDING_PROFILE.
+    assert body["onboarding_profile"]["company"] == "Acme Corp"
 
 
 def test_client_detail_404_for_unknown_org():
