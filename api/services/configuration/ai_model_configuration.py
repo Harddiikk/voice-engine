@@ -48,6 +48,27 @@ WORKFLOW_MODEL_VOICE_OVERRIDE_KEY = "model_voice_override"
 # Default Gemini voice for managed (platform-key) google_realtime configs.
 MANAGED_GEMINI_DEFAULT_VOICE = "Puck"
 
+# Realtime providers whose voices come from the Gemini prebuilt catalog.
+_GEMINI_REALTIME_PROVIDERS = (
+    ServiceProviders.GOOGLE_REALTIME,
+    ServiceProviders.GOOGLE_VERTEX_REALTIME,
+)
+
+
+async def _managed_gemini_key_for(organization_id: int | None) -> str | None:
+    """The Gemini key to use for a managed config, or None when managed Gemini
+    does not apply: org unknown, org has Dograh re-enabled (``show_dograh_voice``),
+    or no key available (per-client ``gemini_api_key`` wins over the platform key).
+    """
+    if organization_id is None:
+        return None
+    from api.services.admin.profile import get_admin_profile
+
+    profile = await get_admin_profile(organization_id)
+    if profile.get("show_dograh_voice"):
+        return None
+    return (profile.get("gemini_api_key") or "").strip() or PLATFORM_GEMINI_API_KEY
+
 
 def build_managed_gemini_effective(
     api_key: str, voice: str | None = None, language: str | None = None
@@ -102,31 +123,35 @@ async def get_resolved_ai_model_configuration(
     organization_id: int | None,
 ) -> ResolvedAIModelConfiguration:
     state = await get_organization_ai_model_configuration_v2_state(organization_id)
+
+    # Managed Gemini (the default voice policy): a Gemini-only org resolves to a
+    # synthesized google_realtime config using the platform (or per-client)
+    # Gemini key — model tab, agent-builder voice picker, and live calls all see
+    # Gemini without the client ever typing a key. Applies when the org has NO
+    # saved config OR a saved DOGRAH-mode config (the legacy managed default —
+    # exactly the "still shows Dograh voices" case). Saved BYOK configs are the
+    # client's/admin's explicit choice and always win. No key available → no-op.
+    managed_key = await _managed_gemini_key_for(organization_id)
+
     if state.configuration is not None:
+        if managed_key and state.configuration.mode == "dograh":
+            return ResolvedAIModelConfiguration(
+                effective=build_managed_gemini_effective(managed_key),
+                source="organization_v2",
+                managed_gemini=True,
+            )
         return ResolvedAIModelConfiguration(
             effective=compile_ai_model_configuration_v2(state.configuration),
             source="organization_v2",
             organization_configuration=state.configuration,
         )
 
-    # Managed Gemini: a Gemini-only org (the default policy) with NO saved config
-    # gets a synthesized google_realtime effective config using the platform (or
-    # per-client) Gemini key — so the model tab, the agent-builder voice picker,
-    # and live calls all resolve to Gemini without the client ever typing a key.
-    # Only kicks in when a key is actually available, so it's a no-op until the
-    # platform key is configured. One profile read (this is on the call path).
-    if organization_id is not None:
-        from api.services.admin.profile import get_admin_profile
-
-        profile = await get_admin_profile(organization_id)
-        gemini_only = not bool(profile.get("show_dograh_voice"))
-        gemini_key = (profile.get("gemini_api_key") or "").strip() or PLATFORM_GEMINI_API_KEY
-        if gemini_only and gemini_key:
-            return ResolvedAIModelConfiguration(
-                effective=build_managed_gemini_effective(gemini_key),
-                source="organization_v2",
-                managed_gemini=True,
-            )
+    if managed_key:
+        return ResolvedAIModelConfiguration(
+            effective=build_managed_gemini_effective(managed_key),
+            source="organization_v2",
+            managed_gemini=True,
+        )
 
     if user_id is None:
         return ResolvedAIModelConfiguration(
@@ -157,10 +182,16 @@ async def get_effective_ai_model_configuration_for_workflow(
         WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY
     )
     if v2_override:
-        effective = compile_ai_model_configuration_v2(
-            OrganizationAIModelConfigurationV2.model_validate(v2_override)
-        )
-        return apply_model_voice_override(effective, voice_override)
+        override_model = OrganizationAIModelConfigurationV2.model_validate(v2_override)
+        # A workflow-level DOGRAH-mode override is superseded by managed Gemini
+        # (same policy as org-level saved Dograh configs); BYOK overrides stand.
+        if override_model.mode == "dograh" and await _managed_gemini_key_for(
+            organization_id
+        ):
+            v2_override = None
+        else:
+            effective = compile_ai_model_configuration_v2(override_model)
+            return apply_model_voice_override(effective, voice_override)
 
     resolved_config = await get_resolved_ai_model_configuration(
         user_id=user_id,
@@ -194,6 +225,16 @@ def apply_model_voice_override(
     language = language.strip() if isinstance(language, str) and language.strip() else None
 
     if effective.is_realtime and effective.realtime is not None:
+        # Guard: a stale voice pick from a non-Gemini era (e.g. Dograh's
+        # "default") layered onto a Gemini realtime config would break the
+        # call. Only apply voices the Gemini catalog actually knows.
+        if effective.realtime.provider in _GEMINI_REALTIME_PROVIDERS:
+            from api.services.configuration.options.google import (
+                GOOGLE_REALTIME_VOICES,
+            )
+
+            if voice not in GOOGLE_REALTIME_VOICES:
+                return effective
         updates: dict = {"voice": voice}
         if language and "language" in type(effective.realtime).model_fields:
             updates["language"] = language

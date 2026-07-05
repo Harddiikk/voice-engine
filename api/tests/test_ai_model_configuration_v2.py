@@ -824,3 +824,87 @@ async def test_saved_config_wins_over_managed_gemini(monkeypatch):
     assert resolved.managed_gemini is False
     assert resolved.source == "organization_v2"
     assert resolved.effective.is_realtime is False
+
+
+@pytest.mark.asyncio
+async def test_saved_dograh_config_overridden_by_managed_gemini(monkeypatch):
+    # Legacy managed default: org saved a dograh-mode config. Gemini-only policy
+    # + platform key => managed Gemini replaces it (the "still shows Dograh" fix).
+    saved = {"version": 2, "mode": "dograh", "dograh": {"api_key": "mps-key"}}
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(side_effect=_config_reader(model_config_value=saved, profile_value={})),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", "shared-gemini-key"
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is True
+    assert resolved.effective.realtime.provider.value == "google_realtime"
+
+
+@pytest.mark.asyncio
+async def test_saved_dograh_config_kept_when_no_gemini_key(monkeypatch):
+    saved = {"version": 2, "mode": "dograh", "dograh": {"api_key": "mps-key"}}
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(side_effect=_config_reader(model_config_value=saved, profile_value={})),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", None
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is False
+    assert resolved.effective.managed_service_version == 2  # compiled dograh config
+
+
+def test_stale_dograh_voice_override_skipped_on_gemini_realtime():
+    from api.services.configuration.ai_model_configuration import (
+        apply_model_voice_override,
+        build_managed_gemini_effective,
+    )
+
+    effective = build_managed_gemini_effective("k")
+    # "default" is the Dograh voice — not a Gemini catalog voice: skipped.
+    patched = apply_model_voice_override(effective, {"voice": "default"})
+    assert patched.realtime.voice == "Puck"
+    # A real Gemini catalog voice applies normally.
+    patched2 = apply_model_voice_override(effective, {"voice": "Kore"})
+    assert patched2.realtime.voice == "Kore"
+
+
+@pytest.mark.asyncio
+async def test_workflow_dograh_override_superseded_by_managed_gemini(monkeypatch):
+    from api.services.configuration.ai_model_configuration import (
+        get_effective_ai_model_configuration_for_workflow,
+    )
+
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(side_effect=_config_reader(profile_value={})),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", "shared-gemini-key"
+    )
+
+    effective = await get_effective_ai_model_configuration_for_workflow(
+        user_id=7,
+        organization_id=42,
+        workflow_configurations={
+            "model_configuration_v2_override": {
+                "version": 2,
+                "mode": "dograh",
+                "dograh": {"api_key": "mps-key"},
+            }
+        },
+    )
+
+    assert effective.is_realtime is True
+    assert effective.realtime.provider.value == "google_realtime"
