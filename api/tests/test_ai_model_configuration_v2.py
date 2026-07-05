@@ -908,3 +908,30 @@ async def test_workflow_dograh_override_superseded_by_managed_gemini(monkeypatch
 
     assert effective.is_realtime is True
     assert effective.realtime.provider.value == "google_realtime"
+
+
+@pytest.mark.asyncio
+async def test_managed_gemini_uses_stored_client_voice(monkeypatch):
+    """A client-chosen managed voice threads into the synthesized config."""
+    from api.enums import OrganizationConfigurationKey
+
+    async def _read(_org, key):
+        if key == OrganizationConfigurationKey.MANAGED_GEMINI_VOICE.value:
+            return SimpleNamespace(value={"voice": "Kore"})
+        if key == OrganizationConfigurationKey.ADMIN_PROFILE.value:
+            return SimpleNamespace(value={})
+        return None  # no saved MODEL_CONFIGURATION_V2
+
+    monkeypatch.setattr(
+        ai_model_configuration_service.db_client,
+        "get_configuration",
+        AsyncMock(side_effect=_read),
+    )
+    monkeypatch.setattr(
+        ai_model_configuration_service, "PLATFORM_GEMINI_API_KEY", "shared-gemini-key"
+    )
+
+    resolved = await get_resolved_ai_model_configuration(user_id=7, organization_id=42)
+
+    assert resolved.managed_gemini is True
+    assert resolved.effective.realtime.voice == "Kore"

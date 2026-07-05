@@ -129,6 +129,7 @@ class OrganizationConfigurationKey(Enum):
     ORGANIZATION_PREFERENCES = "ORGANIZATION_PREFERENCES"  # Org-level defaults such as timezone/test call number
     MODEL_CONFIGURATION_PREFERENCES = "MODEL_CONFIGURATION_PREFERENCES"  # Deprecated; read fallback for old org preferences
     ADMIN_PROFILE = "ADMIN_PROFILE"  # Superuser-managed per-client settings: plan_override, pricing, suspended, notes
+    MANAGED_GEMINI_VOICE = "MANAGED_GEMINI_VOICE"  # Client-chosen Gemini voice for the managed (platform-key) config
 
 
 class UserConfigurationKey(Enum):

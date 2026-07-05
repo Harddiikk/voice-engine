@@ -4,6 +4,7 @@ import { ExternalLink, RefreshCw, Volume2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { client } from "@/client/client.gen";
 import {
     getModelConfigurationV2ApiV1OrganizationsModelConfigurationsV2Get,
     getModelConfigurationV2DefaultsApiV1OrganizationsModelConfigurationsV2DefaultsGet,
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+    deriveVoiceTargetFromEffective,
     deriveVoiceTargetFromV2,
     VoiceLanguagePicker,
     voicePickOptions,
@@ -94,13 +96,28 @@ function ClientVoiceLanguageCard({
     defaults,
     response,
     onSave,
+    onManagedSaved,
 }: {
     defaults: ModelConfigurationDefaultsV2;
     response: OrganizationAiModelConfigurationResponse;
     onSave: (configuration: OrganizationAiModelConfigurationV2) => Promise<void>;
+    onManagedSaved: (next: OrganizationAiModelConfigurationResponse) => Promise<void>;
 }) {
     const configuration = (response.configuration ?? null) as Record<string, unknown> | null;
-    const target = useMemo(() => deriveVoiceTargetFromV2(configuration), [configuration]);
+    const effective = (response.effective_configuration ?? null) as Record<string, unknown> | null;
+    // Prefer the stored config; when there is none (a managed-Gemini org, whose
+    // google_realtime config is synthesized server-side with an injected key),
+    // drive the picker from the effective config so the client can still pick a
+    // voice instead of hitting the "managed by administrator" dead-end.
+    const storedTarget = useMemo(() => deriveVoiceTargetFromV2(configuration), [configuration]);
+    const effectiveTarget = useMemo(
+        () => deriveVoiceTargetFromEffective(effective),
+        [effective],
+    );
+    const target = storedTarget ?? effectiveTarget;
+    // Managed = no stored config but a resolved effective (key is injected
+    // server-side; the client saves only the voice via the keyless endpoint).
+    const managed = !storedTarget && !!effectiveTarget;
     const options = useMemo(() => voicePickOptions(defaults, target), [defaults, target]);
 
     const baseVoice = target?.baseVoice ?? "";
@@ -114,7 +131,7 @@ function ClientVoiceLanguageCard({
         setDraftLanguage(baseLanguage);
     }, [baseVoice, baseLanguage]);
 
-    if (!configuration || !target) {
+    if (!target) {
         return <ManagedByAdminCard />;
     }
 
@@ -127,9 +144,19 @@ function ClientVoiceLanguageCard({
         }
         setIsSaving(true);
         try {
-            await onSave(
-                deepSwapVoiceLanguage(configuration, draftVoice.trim(), draftLanguage.trim()),
-            );
+            if (managed) {
+                // Keyless managed-voice save — stores only the chosen voice.
+                const res = await client.put({
+                    url: "/api/v1/organizations/model-configurations/v2/managed-voice",
+                    body: { voice: draftVoice.trim() },
+                });
+                if (res.error) throw new Error(detailFromError(res.error, "Failed to save voice"));
+                await onManagedSaved(res.data as OrganizationAiModelConfigurationResponse);
+            } else if (configuration) {
+                await onSave(
+                    deepSwapVoiceLanguage(configuration, draftVoice.trim(), draftLanguage.trim()),
+                );
+            }
             toast.success("Voice saved");
         } catch (err) {
             toast.error(err instanceof Error && err.message ? err.message : "Failed to save voice");
@@ -433,6 +460,11 @@ export default function ModelConfigurationV2({
                         defaults={defaults}
                         response={response}
                         onSave={saveConfiguration}
+                        onManagedSaved={async (next) => {
+                            applyResponse(next);
+                            await refreshConfig();
+                            setNotice("Voice saved");
+                        }}
                     />
                 ) : (
                     <ManagedByAdminCard />

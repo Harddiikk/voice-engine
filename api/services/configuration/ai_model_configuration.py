@@ -55,6 +55,28 @@ _GEMINI_REALTIME_PROVIDERS = (
 )
 
 
+async def get_managed_gemini_voice(organization_id: int | None) -> str | None:
+    """The client-chosen Gemini voice for their managed config (None = default)."""
+    if organization_id is None:
+        return None
+    row = await db_client.get_configuration(
+        organization_id, OrganizationConfigurationKey.MANAGED_GEMINI_VOICE.value
+    )
+    value = getattr(row, "value", None)
+    if isinstance(value, dict):
+        voice = value.get("voice")
+        return voice if isinstance(voice, str) and voice.strip() else None
+    return None
+
+
+async def set_managed_gemini_voice(organization_id: int, voice: str) -> None:
+    await db_client.upsert_configuration(
+        organization_id,
+        OrganizationConfigurationKey.MANAGED_GEMINI_VOICE.value,
+        {"voice": voice},
+    )
+
+
 async def _managed_gemini_key_for(organization_id: int | None) -> str | None:
     """The Gemini key to use for a managed config, or None when managed Gemini
     does not apply: org unknown, org has Dograh re-enabled (``show_dograh_voice``),
@@ -135,8 +157,9 @@ async def get_resolved_ai_model_configuration(
 
     if state.configuration is not None:
         if managed_key and state.configuration.mode == "dograh":
+            voice = await get_managed_gemini_voice(organization_id)
             return ResolvedAIModelConfiguration(
-                effective=build_managed_gemini_effective(managed_key),
+                effective=build_managed_gemini_effective(managed_key, voice=voice),
                 source="organization_v2",
                 managed_gemini=True,
             )
@@ -147,8 +170,9 @@ async def get_resolved_ai_model_configuration(
         )
 
     if managed_key:
+        voice = await get_managed_gemini_voice(organization_id)
         return ResolvedAIModelConfiguration(
-            effective=build_managed_gemini_effective(managed_key),
+            effective=build_managed_gemini_effective(managed_key, voice=voice),
             source="organization_v2",
             managed_gemini=True,
         )

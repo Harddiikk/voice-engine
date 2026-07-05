@@ -54,6 +54,7 @@ from api.services.auth.depends import (
     get_user_with_selected_organization,
 )
 from api.services.configuration.ai_model_configuration import (
+    _managed_gemini_key_for,
     check_for_masked_keys_in_ai_model_configuration_v2,
     compile_ai_model_configuration_v2,
     convert_legacy_ai_model_configuration_to_v2,
@@ -63,6 +64,7 @@ from api.services.configuration.ai_model_configuration import (
     mask_ai_model_configuration_v2,
     merge_ai_model_configuration_v2_secrets,
     migrate_workflow_model_configurations_to_v2,
+    set_managed_gemini_voice,
     upsert_organization_ai_model_configuration_v2,
 )
 from api.services.configuration.check_validity import UserConfigurationValidator
@@ -366,6 +368,37 @@ async def get_model_configuration_v2_defaults(
 async def get_model_configuration_v2(
     user: UserModel = Depends(get_user_with_selected_organization),
 ):
+    return await _model_configuration_v2_response(user=user)
+
+
+class SetManagedVoiceRequest(BaseModel):
+    voice: str
+
+
+@router.put(
+    "/model-configurations/v2/managed-voice",
+    response_model=OrganizationAIModelConfigurationResponse,
+)
+async def set_model_configuration_managed_voice(
+    body: SetManagedVoiceRequest,
+    user: UserModel = Depends(get_user_with_selected_organization),
+):
+    """Set the Gemini voice for a managed (platform-key) org — keyless.
+
+    Lets a client pick their Gemini voice without the full model editor or an
+    API key: the key stays server-injected, only the voice is stored. Rejected
+    (400) when the org isn't in managed-Gemini mode (no key / Dograh enabled) or
+    the voice isn't a Gemini catalog voice.
+    """
+    from api.services.configuration.options.google import GOOGLE_REALTIME_VOICES
+
+    org = user.selected_organization_id
+    if not await _managed_gemini_key_for(org):
+        raise HTTPException(status_code=400, detail="managed_gemini_not_active")
+    voice = body.voice.strip()
+    if voice not in GOOGLE_REALTIME_VOICES:
+        raise HTTPException(status_code=400, detail="unknown_gemini_voice")
+    await set_managed_gemini_voice(org, voice)
     return await _model_configuration_v2_response(user=user)
 
 
