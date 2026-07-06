@@ -104,10 +104,8 @@ def _build_message(kind: str, payload: Mapping[str, Any], cfg: dict[str, Any], t
     return msg
 
 
-def _send_sync(kind: str, payload: Mapping[str, Any], cfg: dict[str, Any], to_addr: str) -> None:
-    """Blocking SMTP send. Runs in a worker thread via ``asyncio.to_thread``."""
-    msg = _build_message(kind, payload, cfg, to_addr)
-
+def _deliver(cfg: dict[str, Any], msg: EmailMessage) -> None:
+    """Blocking SMTP delivery of a built message. Runs via ``asyncio.to_thread``."""
     if cfg["use_ssl"]:
         server = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=10)
     else:
@@ -124,6 +122,48 @@ def _send_sync(kind: str, payload: Mapping[str, Any], cfg: dict[str, Any], to_ad
             server.quit()
         except Exception:  # noqa: BLE001 — best-effort cleanup
             pass
+
+
+def _send_sync(kind: str, payload: Mapping[str, Any], cfg: dict[str, Any], to_addr: str) -> None:
+    _deliver(cfg, _build_message(kind, payload, cfg, to_addr))
+
+
+async def send_email(
+    to_addr: str, subject: str, body: str, *, reply_to: str | None = None
+) -> bool:
+    """Generic best-effort transactional email (e.g. plan renewal reminders).
+
+    Returns True when handed to the SMTP server, False when skipped (SMTP
+    unconfigured) or failed. Never raises.
+    """
+    to_addr = (to_addr or "").strip()
+    if not to_addr:
+        return False
+    cfg = _smtp_config()
+    if cfg is None:
+        logger.warning(
+            "Email NOT sent (SMTP unconfigured): to={} subject={}", to_addr, subject
+        )
+        return False
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = cfg["from_addr"]
+    msg["To"] = to_addr
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg["Date"] = formatdate(localtime=True)
+    msg.set_content(body)
+
+    try:
+        await asyncio.to_thread(_deliver, cfg, msg)
+        logger.info("Email sent: to={} subject={}", to_addr, subject)
+        return True
+    except Exception as exc:  # noqa: BLE001 — never raise on email failure
+        logger.error(
+            "Email FAILED: to={} subject={} error={}", to_addr, subject, exc
+        )
+        return False
 
 
 async def send_lead_notification(kind: str, payload: Mapping[str, Any]) -> bool:

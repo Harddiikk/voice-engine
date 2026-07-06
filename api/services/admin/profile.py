@@ -194,6 +194,27 @@ async def get_org_plan_state(organization_id: int) -> dict:
     return plan_state(await get_admin_profile(organization_id))
 
 
+def plan_reminder_already_sent(profile: dict, stage: str, expiry_iso: str) -> bool:
+    """True when a reminder for this (expiry cycle, stage) was already sent — so
+    the daily cron doesn't spam. A renewal changes the expiry, resetting this."""
+    sent = profile.get("plan_reminders_sent") or {}
+    return sent.get("expiry") == expiry_iso and stage in (sent.get("stages") or [])
+
+
+async def record_plan_reminder(
+    organization_id: int, stage: str, expiry_iso: str
+) -> None:
+    """Mark a reminder stage ('warn'/'expired') as sent for the current expiry."""
+    profile = await get_admin_profile(organization_id)
+    sent = profile.get("plan_reminders_sent") or {}
+    if sent.get("expiry") != expiry_iso:
+        sent = {"expiry": expiry_iso, "stages": []}
+    if stage not in sent["stages"]:
+        sent["stages"].append(stage)
+    profile["plan_reminders_sent"] = sent
+    await _save_admin_profile(organization_id, profile)
+
+
 async def extend_plan_month(organization_id: int, *, txnid: str) -> datetime:
     """Activate/renew the org's plan for one cycle (idempotency handled by the
     caller via the payment CAS). Extends from the current expiry when renewing

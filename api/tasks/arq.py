@@ -22,6 +22,7 @@ from api.tasks.campaign_tasks import (
 )
 from api.tasks.credit_sweeper import settle_leaked_credit_holds
 from api.tasks.knowledge_base_processing import process_knowledge_base_document
+from api.tasks.plan_reminders import send_plan_renewal_reminders
 from api.tasks.retry_dispatch import dispatch_due_campaign_retries
 from api.tasks.run_integrations import run_integrations_post_workflow_run
 from api.tasks.s3_upload import upload_voicemail_audio_to_s3
@@ -38,6 +39,7 @@ class WorkerSettings:
         process_knowledge_base_document,
         settle_leaked_credit_holds,
         dispatch_due_campaign_retries,
+        send_plan_renewal_reminders,
     ]
     # Settle leaked credit reservation holds every 10 minutes so a missed
     # post-call settle can't strand a hold. (VoiceLink clients are provisioned
@@ -45,9 +47,13 @@ class WorkerSettings:
     # Retry dispatch-cron every 5 minutes: a resilience backstop that dispatches
     # due, in-window campaign retries even if the in-process orchestrator loop
     # isn't running (safe vs it — batch claims use FOR UPDATE SKIP LOCKED).
+    # Plan renewal reminders once a day (04:00 UTC ≈ 09:30 IST): email clients
+    # whose monthly plan is within 5 days of expiry, and on expiry. Idempotent
+    # per cycle/stage so a daily run never spams.
     cron_jobs = [
         cron(settle_leaked_credit_holds, minute={5, 15, 25, 35, 45, 55}),
         cron(dispatch_due_campaign_retries, minute=set(range(0, 60, 5))),
+        cron(send_plan_renewal_reminders, hour={4}, minute={0}),
     ]
     redis_settings = REDIS_SETTINGS
     max_jobs = 10
