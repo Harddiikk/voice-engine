@@ -12,6 +12,10 @@ Configuration is entirely environment-driven (see ``api/.env.example``):
   SMTP_USER                SMTP auth username (required to actually send)
   SMTP_PASSWORD            SMTP auth password (required to actually send)
   SMTP_FROM                From address. Default: SMTP_USER
+  SMTP_FROM_NAME           Human display name for From (e.g. "Hardik from Auto4You").
+                           A personal name nudges Gmail toward the Primary tab.
+  SMTP_REPLY_TO            Default Reply-To for outbound mail (a real, monitored
+                           inbox). Per-message reply_to still wins.
   SMTP_STARTTLS            "false" to disable STARTTLS. Default: enabled
   SMTP_SSL                 "true" to use implicit TLS (SMTPS, e.g. port 465)
 
@@ -25,7 +29,7 @@ import asyncio
 import os
 import smtplib
 from email.message import EmailMessage
-from email.utils import formatdate
+from email.utils import formataddr, formatdate
 from typing import Any, Mapping
 
 from loguru import logger
@@ -62,12 +66,16 @@ def _smtp_config() -> dict[str, Any] | None:
     except ValueError:
         port = 587
 
+    from_addr = (os.getenv("SMTP_FROM") or user).strip()
+    from_name = (os.getenv("SMTP_FROM_NAME") or "").strip()
     return {
         "host": host,
         "port": port,
         "user": user,
         "password": password,
-        "from_addr": (os.getenv("SMTP_FROM") or user).strip(),
+        "from_addr": from_addr,
+        "from_header": formataddr((from_name, from_addr)) if from_name else from_addr,
+        "reply_to": (os.getenv("SMTP_REPLY_TO") or "").strip() or None,
         "use_ssl": os.getenv("SMTP_SSL", "false").lower() == "true",
         "use_starttls": os.getenv("SMTP_STARTTLS", "true").lower() != "false",
     }
@@ -95,7 +103,7 @@ def _build_message(kind: str, payload: Mapping[str, Any], cfg: dict[str, Any], t
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = cfg["from_addr"]
+    msg["From"] = cfg["from_header"]
     msg["To"] = to_addr
     if contact and contact != "unknown":
         msg["Reply-To"] = contact
@@ -148,10 +156,11 @@ async def send_email(
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = cfg["from_addr"]
+    msg["From"] = cfg["from_header"]
     msg["To"] = to_addr
-    if reply_to:
-        msg["Reply-To"] = reply_to
+    effective_reply_to = reply_to or cfg["reply_to"]
+    if effective_reply_to:
+        msg["Reply-To"] = effective_reply_to
     msg["Date"] = formatdate(localtime=True)
     msg.set_content(body)
 

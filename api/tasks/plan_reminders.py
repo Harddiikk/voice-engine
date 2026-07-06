@@ -30,17 +30,24 @@ def _owner_email(org) -> str | None:
 
 def _reminder_email(plan_title, days_left, expired, renew_url) -> tuple[str, str]:
     name = plan_title or "your plan"
+    signoff = "Thanks,\nTeam Auto4You\n"
     if expired:
         return (
             f"Your {name} has expired — renew to resume calling",
-            f"Your {name} has expired and outbound calling is paused.\n\n"
-            f"Renew now to resume immediately: {renew_url}\n",
+            "Hi,\n\n"
+            f"Your {name} has expired, so outbound calling is paused for now.\n\n"
+            f"You can renew here and calling resumes immediately: {renew_url}\n\n"
+            "If anything looks off with your plan or you have questions, just "
+            "reply to this email.\n\n" + signoff,
         )
     unit = "day" if days_left == 1 else "days"
     return (
         f"Your {name} expires in {days_left} {unit} — please renew",
-        f"Your {name} expires in {days_left} {unit}.\n\n"
-        f"Renew now to avoid any interruption to your calling: {renew_url}\n",
+        "Hi,\n\n"
+        f"A quick heads-up: your {name} expires in {days_left} {unit}.\n\n"
+        f"Renew here to avoid any interruption to your calling: {renew_url}\n\n"
+        "If anything looks off with your plan or you have questions, just "
+        "reply to this email.\n\n" + signoff,
     )
 
 
