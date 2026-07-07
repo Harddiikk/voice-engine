@@ -111,6 +111,17 @@ class CSVSyncService(CampaignSourceSyncService):
             for row_values in rows
         ]
 
+        # source_uuid must stay tied to each row's position in the ORIGINAL
+        # (pre-dedup) file, not its position in the post-dedup list — a
+        # future re-sync of an edited file could drop a different set of
+        # duplicates and shift post-dedup positions, which would change
+        # source_uuid for an already-dialed, non-duplicate contact and let
+        # existing_uuids silently miss it. Capture original positions by
+        # identity before dedup runs (dedupe_by_phone_number only filters
+        # the list; it never copies or replaces surviving row objects, so
+        # id(row) identity survives the call).
+        original_row_positions = {id(row): idx for idx, row in enumerate(rows, 1)}
+
         # Normalize phone numbers, THEN dedupe (keep first occurrence).
         # Normalizing first matches validate_source_data's order, so two rows
         # with the same number in different raw formats (e.g. with/without a
@@ -139,7 +150,8 @@ class CSVSyncService(CampaignSourceSyncService):
 
         # Convert to queued_runs
         queued_runs = []
-        for idx, padded_row in enumerate(rows, 1):
+        for padded_row in rows:
+            idx = original_row_positions[id(padded_row)]
             # Create context variables dict
             context_vars = dict(zip(headers, padded_row))
 
