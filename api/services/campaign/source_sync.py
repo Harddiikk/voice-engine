@@ -22,6 +22,9 @@ class ValidationResult:
     error: Optional[ValidationError] = None
     headers: Optional[List[str]] = field(default=None, repr=False)
     rows: Optional[List[List[str]]] = field(default=None, repr=False)
+    # Count of duplicate-phone-number rows removed by dedupe_by_phone_number.
+    # None when dedup wasn't run (e.g. validation failed before reaching it).
+    duplicate_count: Optional[int] = None
 
 
 class CampaignSourceSyncService(ABC):
@@ -127,6 +130,35 @@ class CampaignSourceSyncService(ABC):
             return f"{cc}{normalized}"
 
         return normalized
+
+    @staticmethod
+    def dedupe_by_phone_number(
+        rows: List[List[str]], phone_number_idx: int
+    ) -> tuple[List[List[str]], int]:
+        """Keep the first row for each phone number; drop later duplicate rows.
+
+        Rows with no value at ``phone_number_idx`` (empty, or the row is
+        shorter than the index) pass through unchanged and are never treated
+        as duplicates of one another — matches the existing empty-phone
+        handling in validate_source_data / sync_source_data.
+        """
+        seen_phones: set[str] = set()
+        deduped_rows: List[List[str]] = []
+        duplicate_count = 0
+        for row in rows:
+            if len(row) <= phone_number_idx:
+                deduped_rows.append(row)
+                continue
+            phone_number = row[phone_number_idx].strip()
+            if not phone_number:
+                deduped_rows.append(row)
+                continue
+            if phone_number in seen_phones:
+                duplicate_count += 1
+                continue
+            seen_phones.add(phone_number)
+            deduped_rows.append(row)
+        return deduped_rows, duplicate_count
 
     @staticmethod
     def validate_source_data(
