@@ -103,6 +103,31 @@ class CSVSyncService(CampaignSourceSyncService):
         # Get phone number column index so we can normalize it during sync
         phone_number_idx = headers.index("phone_number") if "phone_number" in headers else None
 
+        # Pad every row to header length up front (previously done per-row
+        # inside the queued_runs loop below — hoisted so normalization and
+        # dedup below have fully-shaped rows to work with).
+        rows = [
+            row_values + [""] * (len(headers) - len(row_values))
+            for row_values in rows
+        ]
+
+        # Normalize phone numbers, THEN dedupe (keep first occurrence).
+        # Normalizing first matches validate_source_data's order, so two rows
+        # with the same number in different raw formats (e.g. with/without a
+        # leading zero) are recognized as duplicates in both places.
+        if phone_number_idx is not None:
+            for padded_row in rows:
+                if phone_number_idx < len(padded_row):
+                    padded_row[phone_number_idx] = self.normalize_phone_number(
+                        padded_row[phone_number_idx], default_country_code
+                    )
+            rows, duplicate_count = self.dedupe_by_phone_number(rows, phone_number_idx)
+            if duplicate_count:
+                logger.info(
+                    f"Removed {duplicate_count} duplicate phone number row(s) "
+                    f"for campaign {campaign_id}"
+                )
+
         # Create hash of file_key for consistent source_uuid prefix
         file_hash = hashlib.md5(file_key.encode()).hexdigest()[:8]
 
@@ -114,17 +139,7 @@ class CSVSyncService(CampaignSourceSyncService):
 
         # Convert to queued_runs
         queued_runs = []
-        for idx, row_values in enumerate(rows, 1):
-            # Pad row to match headers length
-            padded_row = row_values + [""] * (len(headers) - len(row_values))
-
-            # Apply phone normalization to the row if country code is configured
-            if phone_number_idx is not None and phone_number_idx < len(padded_row):
-                phone_val = padded_row[phone_number_idx]
-                padded_row[phone_number_idx] = self.normalize_phone_number(
-                    phone_val, default_country_code
-                )
-
+        for idx, padded_row in enumerate(rows, 1):
             # Create context variables dict
             context_vars = dict(zip(headers, padded_row))
 
@@ -133,7 +148,7 @@ class CSVSyncService(CampaignSourceSyncService):
                 logger.debug(f"Skipping row {idx}: no phone_number")
                 continue
 
-            # Generate unique source UUID: csv_{hash(source_id)}_row_{idx}
+            # Generate unique source UUID: csv_{file_hash}_row_{idx}
             source_uuid = f"csv_{file_hash}_row_{idx}"
 
             if source_uuid in existing_uuids:
