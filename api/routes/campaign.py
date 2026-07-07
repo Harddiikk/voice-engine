@@ -19,7 +19,6 @@ from api.enums import OrganizationConfigurationKey
 from api.services.admin.profile import get_org_pricing
 from api.services.admin.suspend_gate import assert_org_not_suspended
 from api.services.auth.depends import get_user
-from api.services.campaign.runner import campaign_runner_service
 from api.services.campaign.schedule import default_schedule_config
 from api.services.campaign.source_sync import CampaignSourceSyncService
 from api.services.campaign.source_sync_factory import get_sync_service
@@ -266,6 +265,10 @@ class CampaignResponse(BaseModel):
     state: str
     source_type: str
     source_id: str
+    # Count of duplicate-phone-number rows silently removed from the last
+    # upload/sync. None when no dedup info is available (e.g. the campaign
+    # predates this field, or this response wasn't built from a fresh upload).
+    duplicates_removed: Optional[int] = None
     total_rows: Optional[int]
     processed_rows: int
     failed_rows: int
@@ -339,6 +342,7 @@ def _build_campaign_response(
     telephony_configuration_name: Optional[str] = None,
     total_call_seconds: Optional[int] = None,
     spend_rate_inr_per_minute: float = CAMPAIGN_SPEND_RATE_INR_PER_MINUTE,
+    duplicates_removed: Optional[int] = None,
 ) -> CampaignResponse:
     """Build a CampaignResponse from a campaign model.
 
@@ -409,6 +413,7 @@ def _build_campaign_response(
         state=campaign.state,
         source_type=campaign.source_type,
         source_id=campaign.source_id,
+        duplicates_removed=duplicates_removed,
         total_rows=campaign.total_rows,
         processed_rows=campaign.processed_rows,
         failed_rows=campaign.failed_rows,
@@ -612,6 +617,7 @@ async def create_campaign(
         spend_rate_inr_per_minute=await _get_org_spend_rate(
             campaign.organization_id
         ),
+        duplicates_removed=validation_result.duplicate_count,
     )
 
 
@@ -785,6 +791,8 @@ async def start_campaign(
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
     """Start campaign execution"""
+    from api.services.campaign.runner import campaign_runner_service
+
     # Block start if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -849,6 +857,8 @@ async def pause_campaign(
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
     """Pause campaign execution"""
+    from api.services.campaign.runner import campaign_runner_service
+
     # Verify campaign exists and belongs to organization
     campaign = await db_client.get_campaign(campaign_id, user.selected_organization_id)
     if not campaign:
@@ -1151,6 +1161,8 @@ async def resume_campaign(
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
     """Resume a paused campaign"""
+    from api.services.campaign.runner import campaign_runner_service
+
     # Block resume if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -1215,6 +1227,8 @@ async def get_campaign_progress(
     user: UserModel = Depends(get_user),
 ) -> CampaignProgressResponse:
     """Get current campaign progress and statistics"""
+    from api.services.campaign.runner import campaign_runner_service
+
     # Verify campaign exists and belongs to organization
     campaign = await db_client.get_campaign(campaign_id, user.selected_organization_id)
     if not campaign:
