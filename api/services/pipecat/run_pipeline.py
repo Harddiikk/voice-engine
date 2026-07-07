@@ -679,7 +679,10 @@ async def _run_pipeline(
         vad_analyzer=user_vad_analyzer,
     )
     context_aggregator = LLMContextAggregatorPair(
-        context, assistant_params=assistant_params, user_params=user_params
+        context,
+        assistant_params=assistant_params,
+        user_params=user_params,
+        realtime_service_mode=is_realtime,
     )
 
     # Create usage metrics aggregator with engine's callback
