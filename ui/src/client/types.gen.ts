@@ -910,6 +910,10 @@ export type CampaignResponse = {
      */
     source_id: string;
     /**
+     * Duplicates Removed
+     */
+    duplicates_removed?: number | null;
+    /**
      * Total Rows
      */
     total_rows: number | null;

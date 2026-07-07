@@ -357,7 +357,13 @@ export default function NewCampaignPage() {
             }
 
             if (response.data) {
-                toast.success('Campaign created successfully');
+                if (response.data.duplicates_removed) {
+                    toast.success(
+                        `Campaign created — ${response.data.duplicates_removed} duplicate phone number${response.data.duplicates_removed === 1 ? '' : 's'} removed.`
+                    );
+                } else {
+                    toast.success('Campaign created successfully');
+                }
                 router.push(`/campaigns/${response.data.id}`);
             }
         } catch (error: unknown) {
