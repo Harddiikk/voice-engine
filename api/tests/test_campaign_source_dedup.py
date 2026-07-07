@@ -52,3 +52,41 @@ class TestDedupeByPhoneNumber:
         )
         assert deduped == rows
         assert duplicate_count == 0
+
+
+class TestValidateSourceDataDedup:
+    def test_duplicates_are_removed_not_rejected(self):
+        headers = ["name", "phone_number"]
+        rows = [
+            ["Alice", "+919876543210"],
+            ["Bob", "+919876543211"],
+            ["Alice-again", "+919876543210"],
+        ]
+        result = CampaignSourceSyncService.validate_source_data(headers, rows)
+        assert result.is_valid is True
+        assert result.duplicate_count == 1
+        assert result.rows == [
+            ["Alice", "+919876543210"],
+            ["Bob", "+919876543211"],
+        ]
+
+    def test_no_duplicates_reports_zero(self):
+        headers = ["name", "phone_number"]
+        rows = [
+            ["Alice", "+919876543210"],
+            ["Bob", "+919876543211"],
+        ]
+        result = CampaignSourceSyncService.validate_source_data(headers, rows)
+        assert result.is_valid is True
+        assert result.duplicate_count == 0
+
+    def test_invalid_phone_format_still_rejects_before_dedup_runs(self):
+        # Missing '+' country code is a separate, still-fatal validation error;
+        # dedup should not mask it.
+        headers = ["name", "phone_number"]
+        rows = [
+            ["Alice", "9876543210"],
+        ]
+        result = CampaignSourceSyncService.validate_source_data(headers, rows)
+        assert result.is_valid is False
+        assert "country code" in result.error.message

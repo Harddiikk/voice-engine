@@ -236,37 +236,18 @@ class CampaignSourceSyncService(ABC):
                 ),
             )
 
-        # Check for duplicate phone numbers
-        seen_phones: dict[str, int] = {}  # phone -> first row where it appeared
-        duplicate_rows = []
-        for row_idx, row in enumerate(rows, start=2):
-            if len(row) <= phone_number_idx:
-                continue
+        # Remove duplicate phone numbers (keep first occurrence) instead of
+        # rejecting the upload.
+        rows, duplicate_count = CampaignSourceSyncService.dedupe_by_phone_number(
+            rows, phone_number_idx
+        )
 
-            phone_number = row[phone_number_idx].strip()
-            if not phone_number:
-                continue
-
-            if phone_number in seen_phones:
-                duplicate_rows.append(row_idx)
-            else:
-                seen_phones[phone_number] = row_idx
-
-        if duplicate_rows:
-            if len(duplicate_rows) > 5:
-                rows_str = f"{', '.join(map(str, duplicate_rows[:5]))} and {len(duplicate_rows) - 5} more"
-            else:
-                rows_str = ", ".join(map(str, duplicate_rows))
-
-            return ValidationResult(
-                is_valid=False,
-                error=ValidationError(
-                    message=f"Duplicate phone numbers found in rows: {rows_str}. Phone numbers in a campaign must be unique.",
-                    invalid_rows=duplicate_rows,
-                ),
-            )
-
-        return ValidationResult(is_valid=True, headers=normalized_headers, rows=rows)
+        return ValidationResult(
+            is_valid=True,
+            headers=normalized_headers,
+            rows=rows,
+            duplicate_count=duplicate_count,
+        )
 
     @staticmethod
     def validate_template_columns(
