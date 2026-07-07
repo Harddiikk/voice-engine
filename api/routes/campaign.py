@@ -19,6 +19,7 @@ from api.enums import OrganizationConfigurationKey
 from api.services.admin.profile import get_org_pricing
 from api.services.admin.suspend_gate import assert_org_not_suspended
 from api.services.auth.depends import get_user
+from api.services.campaign.runner import campaign_runner_service
 from api.services.campaign.schedule import default_schedule_config
 from api.services.campaign.source_sync import CampaignSourceSyncService
 from api.services.campaign.source_sync_factory import get_sync_service
@@ -791,8 +792,6 @@ async def start_campaign(
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
     """Start campaign execution"""
-    from api.services.campaign.runner import campaign_runner_service
-
     # Block start if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -857,8 +856,6 @@ async def pause_campaign(
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
     """Pause campaign execution"""
-    from api.services.campaign.runner import campaign_runner_service
-
     # Verify campaign exists and belongs to organization
     campaign = await db_client.get_campaign(campaign_id, user.selected_organization_id)
     if not campaign:
@@ -1161,8 +1158,6 @@ async def resume_campaign(
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
     """Resume a paused campaign"""
-    from api.services.campaign.runner import campaign_runner_service
-
     # Block resume if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -1227,8 +1222,6 @@ async def get_campaign_progress(
     user: UserModel = Depends(get_user),
 ) -> CampaignProgressResponse:
     """Get current campaign progress and statistics"""
-    from api.services.campaign.runner import campaign_runner_service
-
     # Verify campaign exists and belongs to organization
     campaign = await db_client.get_campaign(campaign_id, user.selected_organization_id)
     if not campaign:

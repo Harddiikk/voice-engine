@@ -2,12 +2,26 @@
 when the caller supplies one, and default to None otherwise.
 
 _build_campaign_response is synchronous (no I/O inside it) — these are
-plain, non-async tests."""
+plain, non-async tests.
 
+``api.routes.campaign`` can't be imported directly in the test venv — its
+``campaign.runner`` import transitively pulls pipecat azure/google speech deps
+that aren't installed. We stub that one hub module before import; everything
+else under test (``_build_campaign_response``) is the real code.
+"""
+
+import sys
+import types
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from api.routes.campaign import _build_campaign_response
+# Stub the azure/google-heavy runner hub so campaign.py imports in this venv.
+if "api.services.campaign.runner" not in sys.modules:
+    _runner_stub = types.ModuleType("api.services.campaign.runner")
+    _runner_stub.campaign_runner_service = object()
+    sys.modules["api.services.campaign.runner"] = _runner_stub
+
+from api.routes.campaign import _build_campaign_response  # noqa: E402
 
 
 def _fake_campaign():
