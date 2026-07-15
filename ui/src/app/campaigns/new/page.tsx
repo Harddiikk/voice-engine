@@ -417,6 +417,17 @@ export default function NewCampaignPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user]);
 
+    // "today" / "yesterday" / "15 Jul" for the sheet dropdown labels.
+    const formatSheetDate = (iso: string) => {
+        const d = new Date(iso);
+        const now = new Date();
+        const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+        const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+        if (dayDiff <= 0) return 'today';
+        if (dayDiff === 1) return 'yesterday';
+        return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    };
+
     const handleReuseSheet = (selectedSourceId: string) => {
         const sheet = previousSheets.find((s) => s.source_id === selectedSourceId);
         if (!sheet) return;
@@ -592,8 +603,9 @@ export default function NewCampaignPage() {
                                             {previousSheets.map((sheet) => (
                                                 <SelectItem key={sheet.source_id} value={sheet.source_id}>
                                                     {sheet.filename}
-                                                    {sheet.total_rows ? ` — ${sheet.total_rows} rows` : ''}
-                                                    {` — used in ${sheet.campaigns_count} campaign${sheet.campaigns_count === 1 ? '' : 's'}`}
+                                                    {sheet.total_rows ? ` — ${sheet.total_rows} row${sheet.total_rows === 1 ? '' : 's'}` : ''}
+                                                    {` — ${formatSheetDate(sheet.last_used_at)}`}
+                                                    {sheet.campaigns_count > 1 ? ` — ${sheet.campaigns_count} campaigns` : ''}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>

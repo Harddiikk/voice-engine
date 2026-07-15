@@ -805,25 +805,51 @@ def _source_display_filename(source_id: str) -> str:
     return basename
 
 
+MAX_SOURCES_IN_DROPDOWN = 15
+
+
+def dedupe_sources_by_filename(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collapse repeated uploads of the same file to ONE dropdown entry.
+
+    Every upload gets a unique storage key, so the raw list shows the same
+    filename once per upload. Keep only the most recent upload per display
+    filename (input is already newest-first), but aggregate how many
+    campaigns used ANY upload of that filename. Capped for the dropdown.
+    """
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for s in sources:
+        name = _source_display_filename(s["source_id"])
+        if name in by_name:
+            by_name[name]["campaigns_count"] += s["campaigns_count"]
+            if s["first_used_at"] < by_name[name]["first_used_at"]:
+                by_name[name]["first_used_at"] = s["first_used_at"]
+        else:
+            by_name[name] = {**s, "filename": name}
+    return list(by_name.values())[:MAX_SOURCES_IN_DROPDOWN]
+
+
 # NOTE: must be declared BEFORE the /{campaign_id} route below, or FastAPI
 # tries to parse "sources" as a campaign id.
 @router.get("/sources")
 async def list_campaign_sources(
     user: UserModel = Depends(get_user),
 ) -> CampaignSourcesResponse:
-    """Previously uploaded contact sheets for the org (for sheet reuse)."""
+    """Previously uploaded contact sheets for the org (for sheet reuse).
+
+    One entry per distinct filename — the latest upload of it — newest first.
+    """
     sources = await db_client.list_campaign_sources(user.selected_organization_id)
     return CampaignSourcesResponse(
         sources=[
             CampaignSourceResponse(
                 source_id=s["source_id"],
-                filename=_source_display_filename(s["source_id"]),
+                filename=s["filename"],
                 total_rows=s["total_rows"],
                 first_used_at=s["first_used_at"],
                 last_used_at=s["last_used_at"],
                 campaigns_count=s["campaigns_count"],
             )
-            for s in sources
+            for s in dedupe_sources_by_filename(sources)
         ]
     )
 
