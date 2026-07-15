@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ITimezoneOption } from 'react-timezone-select';
 import { toast } from 'sonner';
 
+import { client } from '@/client/client.gen';
 import {
     createCampaignApiV1CampaignCreatePost,
     getCampaignDefaultsApiV1OrganizationsCampaignDefaultsGet,
@@ -41,6 +42,14 @@ export default function NewCampaignPage() {
     const [sourceType, setSourceType] = useState<'csv'>('csv');
     const [sourceId, setSourceId] = useState('');
     const [selectedFileName, setSelectedFileName] = useState('');
+    // Previously uploaded sheets (reusable across campaigns).
+    const [previousSheets, setPreviousSheets] = useState<Array<{
+        source_id: string;
+        filename: string;
+        total_rows?: number | null;
+        last_used_at: string;
+        campaigns_count: number;
+    }>>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [createError, setCreateError] = useState<string | null>(null);
 
@@ -321,7 +330,12 @@ export default function NewCampaignPage() {
             }
 
             if (response.data) {
-                toast.success('Campaign created successfully');
+                const dups = (response.data as unknown as { duplicates_removed?: number | null }).duplicates_removed;
+                if (dups) {
+                    toast.success(`Campaign created — ${dups} duplicate phone number${dups === 1 ? '' : 's'} removed.`);
+                } else {
+                    toast.success('Campaign created successfully');
+                }
                 router.push(`/campaigns/${response.data.id}`);
             }
         } catch (error: unknown) {
@@ -340,6 +354,45 @@ export default function NewCampaignPage() {
     };
 
     // Handle CSV file upload
+    // Load previously uploaded sheets so the same file can be reused
+    // across campaigns without re-uploading.
+    useEffect(() => {
+        if (!user) return;
+        (async () => {
+            try {
+                const accessToken = await getAccessToken();
+                const response = await client.get({
+                    url: '/api/v1/campaign/sources',
+                    headers: { 'Authorization': `Bearer ${accessToken}` },
+                });
+                const data = response.data as { sources?: typeof previousSheets };
+                if (data?.sources) setPreviousSheets(data.sources);
+            } catch {
+                // Non-fatal: the dropdown just stays hidden.
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user]);
+
+    // "today" / "yesterday" / "15 Jul" for the sheet dropdown labels.
+    const formatSheetDate = (iso: string) => {
+        const d = new Date(iso);
+        const now = new Date();
+        const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+        const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+        if (dayDiff <= 0) return 'today';
+        if (dayDiff === 1) return 'yesterday';
+        return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    };
+
+    const handleReuseSheet = (selectedSourceId: string) => {
+        const sheet = previousSheets.find((sh) => sh.source_id === selectedSourceId);
+        if (!sheet) return;
+        setSourceId(sheet.source_id);
+        setSelectedFileName(sheet.filename);
+        setCreateError(null);
+    };
+
     const handleFileUploaded = (fileKey: string, fileName: string) => {
         setSourceId(fileKey);
         setSelectedFileName(fileName);
@@ -489,6 +542,33 @@ export default function NewCampaignPage() {
                                     Choose where your contact data is stored
                                 </p>
                             </div>
+
+                            {previousSheets.length > 0 && (
+                                <div className="space-y-2">
+                                    <Label>Reuse a previous sheet</Label>
+                                    <Select
+                                        value={previousSheets.some((sh) => sh.source_id === sourceId) ? sourceId : ''}
+                                        onValueChange={handleReuseSheet}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select a previously uploaded sheet (optional)" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {previousSheets.map((sheet) => (
+                                                <SelectItem key={sheet.source_id} value={sheet.source_id}>
+                                                    {sheet.filename}
+                                                    {sheet.total_rows ? ` — ${sheet.total_rows} row${sheet.total_rows === 1 ? '' : 's'}` : ''}
+                                                    {` — ${formatSheetDate(sheet.last_used_at)}`}
+                                                    {sheet.campaigns_count > 1 ? ` — ${sheet.campaigns_count} campaigns` : ''}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-sm text-muted-foreground">
+                                        Or upload a new sheet below — the same sheet can run in multiple campaigns.
+                                    </p>
+                                </div>
+                            )}
 
                             <CsvUploadSelector
                                 onFileUploaded={handleFileUploaded}
