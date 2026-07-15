@@ -973,3 +973,151 @@ class TestProcessBatchEdgeCases:
                     {"campaign_id": campaign_test_data.campaign_id},
                 )
                 await session.commit()
+
+
+class TestLeadQuotaCursorFlow:
+    """End-to-end "call next N leads" flow against a real database:
+    quota caps the window, campaign auto-pauses, a new window resumes
+    from the NEXT lead in sheet (id) order."""
+
+    def _patch_rate_limiter(self, mock_rl, mock_rate_limiter):
+        for name, fn in mock_rate_limiter.items():
+            setattr(mock_rl, name, AsyncMock(side_effect=fn))
+
+    async def _set_metadata(self, db_session_factory, campaign_id, metadata):
+        import json as _json
+
+        async with db_session_factory() as session:
+            await session.execute(
+                text(
+                    "UPDATE campaigns SET orchestrator_metadata = CAST(:meta AS json), "
+                    "state = 'running' WHERE id = :campaign_id"
+                ),
+                {"meta": _json.dumps(metadata), "campaign_id": campaign_id},
+            )
+            await session.commit()
+
+    async def _get_campaign_row(self, db_session_factory, campaign_id):
+        async with db_session_factory() as session:
+            result = await session.execute(
+                text(
+                    "SELECT state, orchestrator_metadata FROM campaigns "
+                    "WHERE id = :campaign_id"
+                ),
+                {"campaign_id": campaign_id},
+            )
+            return result.one()
+
+    @pytest.mark.asyncio
+    async def test_two_quota_windows_walk_the_sheet_in_order(
+        self,
+        campaign_test_data,
+        mock_dispatch_call,
+        mock_rate_limiter,
+        db_session_factory,
+    ):
+        from api.services.campaign.lead_quota import open_quota_window
+
+        mock_dispatch, processed_runs = mock_dispatch_call
+        campaign_id = campaign_test_data.campaign_id
+
+        # ---- Window 1: quota of 4 ("call first 4 leads") ----
+        meta, _ = open_quota_window({}, 4)
+        await self._set_metadata(db_session_factory, campaign_id, meta)
+
+        with (
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.rate_limiter"
+            ) as mock_rl,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.has_free_call_seconds",
+                AsyncMock(return_value=True),
+            ),
+        ):
+            self._patch_rate_limiter(mock_rl, mock_rate_limiter)
+            dispatcher = CampaignCallDispatcher()
+
+            with patch.object(dispatcher, "dispatch_call", side_effect=mock_dispatch):
+                # Batch of 10 requested, but quota window must cap at 4.
+                processed = await dispatcher.process_batch(
+                    campaign_id=campaign_id, batch_size=10
+                )
+                assert processed == 4
+                # First 4 leads in sheet (insertion) order — the cursor start.
+                assert processed_runs == campaign_test_data.queued_run_ids[:4]
+
+                # Next scheduled batch hits the exhausted quota → auto-pause.
+                processed = await dispatcher.process_batch(
+                    campaign_id=campaign_id, batch_size=10
+                )
+                assert processed == 0
+
+            state, meta_after = await self._get_campaign_row(
+                db_session_factory, campaign_id
+            )
+            assert state == "paused"
+            assert meta_after["lead_quota_used"] == 4
+
+            # ---- Window 2 (another day): "call next 3 leads" ----
+            meta2, _ = open_quota_window(meta_after, 3)
+            assert "lead_quota_used" not in meta2
+            await self._set_metadata(db_session_factory, campaign_id, meta2)
+
+            with patch.object(dispatcher, "dispatch_call", side_effect=mock_dispatch):
+                processed = await dispatcher.process_batch(
+                    campaign_id=campaign_id, batch_size=10
+                )
+                assert processed == 3
+                # Continues from lead #5 — the persistent cursor.
+                assert processed_runs == campaign_test_data.queued_run_ids[:7]
+
+                processed = await dispatcher.process_batch(
+                    campaign_id=campaign_id, batch_size=10
+                )
+                assert processed == 0
+
+            state, meta_after2 = await self._get_campaign_row(
+                db_session_factory, campaign_id
+            )
+            assert state == "paused"
+            assert meta_after2["lead_quota_used"] == 3
+
+    @pytest.mark.asyncio
+    async def test_unlimited_window_processes_everything(
+        self,
+        campaign_test_data,
+        mock_dispatch_call,
+        mock_rate_limiter,
+        db_session_factory,
+    ):
+        from api.services.campaign.lead_quota import open_quota_window
+
+        mock_dispatch, processed_runs = mock_dispatch_call
+        campaign_id = campaign_test_data.campaign_id
+
+        # Clearing the quota (no call_limit) → old unlimited behavior.
+        meta, _ = open_quota_window({"lead_quota": 2, "lead_quota_used": 2}, None)
+        await self._set_metadata(db_session_factory, campaign_id, meta)
+
+        with (
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.rate_limiter"
+            ) as mock_rl,
+            patch(
+                "api.services.campaign.campaign_call_dispatcher.has_free_call_seconds",
+                AsyncMock(return_value=True),
+            ),
+        ):
+            self._patch_rate_limiter(mock_rl, mock_rate_limiter)
+            dispatcher = CampaignCallDispatcher()
+
+            with patch.object(dispatcher, "dispatch_call", side_effect=mock_dispatch):
+                processed = await dispatcher.process_batch(
+                    campaign_id=campaign_id, batch_size=10
+                )
+                assert processed == 10
+
+            state, _meta = await self._get_campaign_row(
+                db_session_factory, campaign_id
+            )
+            assert state == "running"

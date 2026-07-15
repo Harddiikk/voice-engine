@@ -547,6 +547,45 @@ class CampaignClient(BaseDBClient):
                 await session.rollback()
                 raise
 
+    async def list_campaign_sources(
+        self, organization_id: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Distinct uploaded contact sheets for an org, newest first.
+
+        Backs the "reuse a previous sheet" dropdown on campaign create —
+        ``source_id`` is just an object-storage key, so a new campaign can
+        point at any previously uploaded file.
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(
+                    CampaignModel.source_id,
+                    func.max(CampaignModel.total_rows).label("total_rows"),
+                    func.min(CampaignModel.created_at).label("first_used_at"),
+                    func.max(CampaignModel.created_at).label("last_used_at"),
+                    func.count(CampaignModel.id).label("campaigns_count"),
+                )
+                .where(
+                    CampaignModel.organization_id == organization_id,
+                    CampaignModel.source_type == "csv",
+                    CampaignModel.source_id.isnot(None),
+                    CampaignModel.source_id != "",
+                )
+                .group_by(CampaignModel.source_id)
+                .order_by(func.max(CampaignModel.created_at).desc())
+                .limit(limit)
+            )
+            return [
+                {
+                    "source_id": row.source_id,
+                    "total_rows": row.total_rows,
+                    "first_used_at": row.first_used_at,
+                    "last_used_at": row.last_used_at,
+                    "campaigns_count": row.campaigns_count,
+                }
+                for row in result.all()
+            ]
+
     # QueuedRun methods
     async def get_existing_source_uuids(self, campaign_id: int) -> set:
         """Source UUIDs already queued for a campaign.
@@ -916,6 +955,7 @@ class CampaignClient(BaseDBClient):
         campaign_id: int,
         scheduled_before: datetime,
         limit: int = 10,
+        new_lead_limit: int | None = None,
     ) -> list[QueuedRunModel]:
         """
         Atomically claim queued runs for processing using SELECT FOR UPDATE SKIP LOCKED.
@@ -925,6 +965,11 @@ class CampaignClient(BaseDBClient):
         1. Prioritizes scheduled retries that are due
         2. Falls back to regular queued runs if more slots available
         3. Locks selected rows and marks them as 'processing' atomically
+
+        ``new_lead_limit`` caps how many first-attempt (non-retry) runs may be
+        claimed in this batch — the lead-quota gate ("call next N leads").
+        Retries are never capped by it. Regular runs are claimed in ``id``
+        order so "the next N" follows the uploaded sheet order.
 
         Returns: List of claimed QueuedRunModel objects
         """
@@ -954,8 +999,13 @@ class CampaignClient(BaseDBClient):
                 claimed_runs.append(run)
 
             remaining_slots = limit - len(scheduled_runs)
+            # Lead quota: cap first-attempt claims without touching retries.
+            if new_lead_limit is not None:
+                remaining_slots = min(remaining_slots, max(0, new_lead_limit))
 
-            # Then get regular queued runs if we have remaining slots
+            # Then get regular queued runs if we have remaining slots.
+            # id order = uploaded sheet order, so a lead quota always calls
+            # "the next N" deterministically.
             if remaining_slots > 0:
                 regular_query = (
                     select(QueuedRunModel)
@@ -964,7 +1014,7 @@ class CampaignClient(BaseDBClient):
                         QueuedRunModel.state == "queued",
                         QueuedRunModel.scheduled_for.is_(None),
                     )
-                    .order_by(func.random())
+                    .order_by(QueuedRunModel.id)
                     .limit(remaining_slots)
                     .with_for_update(skip_locked=True)
                 )

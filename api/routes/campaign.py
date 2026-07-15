@@ -244,6 +244,17 @@ class UpdateCampaignRequest(BaseModel):
     budget_minutes: Optional[int] = Field(default=None, ge=0, le=1_000_000)
 
 
+class StartCampaignRequest(BaseModel):
+    """Optional body for start/resume — the "call next N leads" window.
+
+    ``call_limit=N``: dispatch at most N first-attempt leads this run, then
+    auto-pause (retries excluded). Omitted/null: unlimited, clears any
+    previous quota. Each start/resume opens a fresh window.
+    """
+
+    call_limit: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+
+
 class CampaignLogEntryResponse(BaseModel):
     """A single timestamped entry from the campaign's append-only log.
 
@@ -279,6 +290,11 @@ class CampaignResponse(BaseModel):
     retry_config: RetryConfigResponse
     max_concurrency: Optional[int] = None
     budget_minutes: Optional[int] = None
+    # Lead quota for the current run window ("call next N leads"): the cap
+    # set at start/resume and how many first-attempt leads it has consumed.
+    # call_limit None = unlimited.
+    call_limit: Optional[int] = None
+    call_limit_used: int = 0
     schedule_config: Optional[ScheduleConfigResponse] = None
     circuit_breaker: Optional[CircuitBreakerConfigResponse] = None
     # Per-campaign override of the workflow's voicemail hangup behavior. None
@@ -366,6 +382,8 @@ def _build_campaign_response(
     # Get max_concurrency, schedule_config, circuit_breaker from orchestrator_metadata
     max_concurrency = None
     budget_minutes = None
+    call_limit = None
+    call_limit_used = 0
     schedule_config = None
     circuit_breaker_config = CircuitBreakerConfigResponse()
     parent_campaign_id = None
@@ -377,6 +395,12 @@ def _build_campaign_response(
         _budget_seconds = campaign.orchestrator_metadata.get("budget_seconds")
         if _budget_seconds:
             budget_minutes = int(int(_budget_seconds) / 60)
+        _lead_quota = campaign.orchestrator_metadata.get("lead_quota")
+        if _lead_quota:
+            call_limit = int(_lead_quota)
+        call_limit_used = int(
+            campaign.orchestrator_metadata.get("lead_quota_used", 0) or 0
+        )
         hangup_on_voicemail = campaign.orchestrator_metadata.get("hangup_on_voicemail")
         sc = campaign.orchestrator_metadata.get("schedule_config")
         if sc:
@@ -423,6 +447,8 @@ def _build_campaign_response(
         completed_at=campaign.completed_at,
         retry_config=RetryConfigResponse(**retry_config),
         budget_minutes=budget_minutes,
+        call_limit=call_limit,
+        call_limit_used=call_limit_used,
         max_concurrency=max_concurrency,
         schedule_config=schedule_config,
         circuit_breaker=circuit_breaker_config,
@@ -756,6 +782,52 @@ async def get_campaigns(
     return CampaignsResponse(campaigns=campaign_responses)
 
 
+class CampaignSourceResponse(BaseModel):
+    """A previously uploaded contact sheet, reusable in a new campaign."""
+
+    source_id: str
+    filename: str
+    total_rows: Optional[int] = None
+    first_used_at: datetime
+    last_used_at: datetime
+    campaigns_count: int
+
+
+class CampaignSourcesResponse(BaseModel):
+    sources: List[CampaignSourceResponse]
+
+
+def _source_display_filename(source_id: str) -> str:
+    """Human filename from a storage key like campaigns/{org}/{uuid}_{name}.csv."""
+    basename = source_id.rsplit("/", 1)[-1]
+    if "_" in basename:
+        return basename.split("_", 1)[1]
+    return basename
+
+
+# NOTE: must be declared BEFORE the /{campaign_id} route below, or FastAPI
+# tries to parse "sources" as a campaign id.
+@router.get("/sources")
+async def list_campaign_sources(
+    user: UserModel = Depends(get_user),
+) -> CampaignSourcesResponse:
+    """Previously uploaded contact sheets for the org (for sheet reuse)."""
+    sources = await db_client.list_campaign_sources(user.selected_organization_id)
+    return CampaignSourcesResponse(
+        sources=[
+            CampaignSourceResponse(
+                source_id=s["source_id"],
+                filename=_source_display_filename(s["source_id"]),
+                total_rows=s["total_rows"],
+                first_used_at=s["first_used_at"],
+                last_used_at=s["last_used_at"],
+                campaigns_count=s["campaigns_count"],
+            )
+            for s in sources
+        ]
+    )
+
+
 @router.get("/{campaign_id}")
 async def get_campaign(
     campaign_id: int,
@@ -789,9 +861,10 @@ async def get_campaign(
 @router.post("/{campaign_id}/start")
 async def start_campaign(
     campaign_id: int,
+    request: Optional[StartCampaignRequest] = None,
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
-    """Start campaign execution"""
+    """Start campaign execution (optional body caps this run to N leads)"""
     # Block start if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -824,7 +897,9 @@ async def start_campaign(
 
     # Start the campaign using the runner service
     try:
-        await campaign_runner_service.start_campaign(campaign_id)
+        await campaign_runner_service.start_campaign(
+            campaign_id, call_limit=request.call_limit if request else None
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1155,9 +1230,10 @@ async def redial_campaign(
 @router.post("/{campaign_id}/resume")
 async def resume_campaign(
     campaign_id: int,
+    request: Optional[StartCampaignRequest] = None,
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
-    """Resume a paused campaign"""
+    """Resume a paused campaign (optional body caps this run to N leads)"""
     # Block resume if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -1190,7 +1266,9 @@ async def resume_campaign(
 
     # Resume the campaign using the runner service
     try:
-        await campaign_runner_service.resume_campaign(campaign_id)
+        await campaign_runner_service.resume_campaign(
+            campaign_id, call_limit=request.call_limit if request else None
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

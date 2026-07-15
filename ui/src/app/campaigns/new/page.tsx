@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ITimezoneOption } from 'react-timezone-select';
 import { toast } from 'sonner';
 
+import { client } from '@/client/client.gen';
 import {
     createCampaignApiV1CampaignCreatePost,
     getCampaignDefaultsApiV1OrganizationsCampaignDefaultsGet,
@@ -46,6 +47,14 @@ export default function NewCampaignPage() {
     const sourceType = 'csv' as const;
     const [sourceId, setSourceId] = useState('');
     const [selectedFileName, setSelectedFileName] = useState('');
+    // Previously uploaded sheets (reusable across campaigns).
+    const [previousSheets, setPreviousSheets] = useState<Array<{
+        source_id: string;
+        filename: string;
+        total_rows?: number | null;
+        last_used_at: string;
+        campaigns_count: number;
+    }>>([]);
     const [defaultCountryCode, setDefaultCountryCode] = useState<string>('+91');
     const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -388,6 +397,34 @@ export default function NewCampaignPage() {
         setCreateError(null);
     };
 
+    // Load previously uploaded sheets so the same file can be reused
+    // across campaigns without re-uploading.
+    useEffect(() => {
+        if (!user) return;
+        (async () => {
+            try {
+                const accessToken = await getAccessToken();
+                const response = await client.get({
+                    url: '/api/v1/campaign/sources',
+                    headers: { 'Authorization': `Bearer ${accessToken}` },
+                });
+                const data = response.data as { sources?: typeof previousSheets };
+                if (data?.sources) setPreviousSheets(data.sources);
+            } catch {
+                // Non-fatal: the dropdown just stays hidden.
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user]);
+
+    const handleReuseSheet = (selectedSourceId: string) => {
+        const sheet = previousSheets.find((s) => s.source_id === selectedSourceId);
+        if (!sheet) return;
+        setSourceId(sheet.source_id);
+        setSelectedFileName(sheet.filename);
+        setCreateError(null);
+    };
+
     return (
         <PageShell width="narrow">
             <div>
@@ -540,6 +577,32 @@ export default function NewCampaignPage() {
                                     Automatically prepends this country code to any uploaded phone number that does not start with &apos;+&apos;
                                 </p>
                             </div>
+
+                            {previousSheets.length > 0 && (
+                                <div className="space-y-2">
+                                    <Label>Reuse a previous sheet</Label>
+                                    <Select
+                                        value={previousSheets.some((s) => s.source_id === sourceId) ? sourceId : ''}
+                                        onValueChange={handleReuseSheet}
+                                    >
+                                        <SelectTrigger>
+                                            <SelectValue placeholder="Select a previously uploaded sheet (optional)" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {previousSheets.map((sheet) => (
+                                                <SelectItem key={sheet.source_id} value={sheet.source_id}>
+                                                    {sheet.filename}
+                                                    {sheet.total_rows ? ` — ${sheet.total_rows} rows` : ''}
+                                                    {` — used in ${sheet.campaigns_count} campaign${sheet.campaigns_count === 1 ? '' : 's'}`}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <p className="text-sm text-muted-foreground">
+                                        Or upload a new sheet below — the same sheet can run in multiple campaigns.
+                                    </p>
+                                </div>
+                            )}
 
                             <CsvUploadSelector
                                 onFileUploaded={handleFileUploaded}

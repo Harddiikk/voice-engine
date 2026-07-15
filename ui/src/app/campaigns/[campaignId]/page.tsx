@@ -51,6 +51,8 @@ export default function CampaignDetailPage() {
 
     // Action state
     const [isExecutingAction, setIsExecutingAction] = useState(false);
+    // "Call next N leads" for this run window; empty = call all remaining.
+    const [callLimitInput, setCallLimitInput] = useState('');
     const [isDownloadingReport, setIsDownloadingReport] = useState(false);
 
     // Report date range state
@@ -205,10 +207,13 @@ export default function CampaignDetailPage() {
         setIsExecutingAction(true);
         try {
             const accessToken = await getAccessToken();
+            const callLimit = parseInt(callLimitInput, 10);
+            const hasLimit = Number.isFinite(callLimit) && callLimit > 0;
             const response = await startCampaignApiV1CampaignCampaignIdStartPost({
                 path: {
                     campaign_id: campaignId,
                 },
+                ...(hasLimit ? { body: { call_limit: callLimit } } : {}),
                 headers: {
                     'Authorization': `Bearer ${accessToken}`,
                 }
@@ -216,7 +221,8 @@ export default function CampaignDetailPage() {
 
             if (response.data) {
                 setCampaign(response.data);
-                toast.success('Campaign started');
+                setCallLimitInput('');
+                toast.success(hasLimit ? `Campaign started — calling next ${callLimit} leads` : 'Campaign started');
             } else if (response.error) {
                 // Extract error message from response
                 let errorMsg = 'Failed to start campaign';
@@ -241,10 +247,13 @@ export default function CampaignDetailPage() {
         setIsExecutingAction(true);
         try {
             const accessToken = await getAccessToken();
+            const callLimit = parseInt(callLimitInput, 10);
+            const hasLimit = Number.isFinite(callLimit) && callLimit > 0;
             const response = await resumeCampaignApiV1CampaignCampaignIdResumePost({
                 path: {
                     campaign_id: campaignId,
                 },
+                ...(hasLimit ? { body: { call_limit: callLimit } } : {}),
                 headers: {
                     'Authorization': `Bearer ${accessToken}`,
                 }
@@ -252,7 +261,8 @@ export default function CampaignDetailPage() {
 
             if (response.data) {
                 setCampaign(response.data);
-                toast.success('Campaign resumed');
+                setCallLimitInput('');
+                toast.success(hasLimit ? `Campaign resumed — calling next ${callLimit} leads` : 'Campaign resumed');
             } else if (response.error) {
                 // Extract error message from response
                 let errorMsg = 'Failed to resume campaign';
@@ -426,14 +436,33 @@ export default function CampaignDetailPage() {
             </Button>
         ) : null;
 
+        const parsedCallLimit = parseInt(callLimitInput, 10);
+        const hasCallLimit = Number.isFinite(parsedCallLimit) && parsedCallLimit > 0;
+        // "Call next N leads": empty input = call all remaining leads.
+        const callLimitField = (
+            <div className="flex items-center gap-1.5">
+                <Input
+                    type="number"
+                    min={1}
+                    placeholder="All"
+                    value={callLimitInput}
+                    onChange={(e) => setCallLimitInput(e.target.value)}
+                    className="w-24"
+                    aria-label="Number of leads to call in this run"
+                />
+                <span className="text-sm text-muted-foreground whitespace-nowrap">leads this run</span>
+            </div>
+        );
+
         switch (campaign.state) {
             case 'created':
                 return (
                     <div className="flex items-center gap-2">
                         {editButton}
+                        {callLimitField}
                         <Button onClick={handleStart} disabled={isExecutingAction}>
                             <Play className="h-4 w-4 mr-2" />
-                            Start Campaign
+                            {hasCallLimit ? `Call First ${parsedCallLimit} Leads` : 'Start Campaign'}
                         </Button>
                     </div>
                 );
@@ -451,9 +480,10 @@ export default function CampaignDetailPage() {
                 return (
                     <div className="flex items-center gap-2">
                         {editButton}
+                        {callLimitField}
                         <Button onClick={handleResume} disabled={isExecutingAction}>
                             <RefreshCw className="h-4 w-4 mr-2" />
-                            Resume Campaign
+                            {hasCallLimit ? `Call Next ${parsedCallLimit} Leads` : 'Resume Campaign'}
                         </Button>
                     </div>
                 );
@@ -677,8 +707,19 @@ export default function CampaignDetailPage() {
                                 <dt className="text-sm font-medium">Progress</dt>
                                 <dd className="mt-1">
                                     {campaign.executed_count} / {campaign.total_queued_count}
+                                    <span className="ml-1 text-sm text-muted-foreground">
+                                        ({Math.max(0, (campaign.total_queued_count ?? 0) - (campaign.executed_count ?? 0))} remaining)
+                                    </span>
                                 </dd>
                             </div>
+                            {campaign.call_limit ? (
+                                <div>
+                                    <dt className="text-sm font-medium">This Run Window</dt>
+                                    <dd className="mt-1">
+                                        {campaign.call_limit_used ?? 0} / {campaign.call_limit} leads
+                                    </dd>
+                                </div>
+                            ) : null}
                             <div>
                                 <dt className="text-sm font-medium">Spent</dt>
                                 <dd className="mt-1">

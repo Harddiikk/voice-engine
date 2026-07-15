@@ -119,13 +119,26 @@ class CampaignSourceSyncService(ABC):
             return normalized
 
         if default_country_code:
-            # Strip single leading zero
-            if normalized.startswith("0"):
-                normalized = normalized[1:]
-
             cc = default_country_code.strip()
             if not cc.startswith("+"):
                 cc = "+" + cc
+            cc_digits = cc[1:]
+
+            # "00" international dial prefix (e.g. 00919876543210) → drop it
+            if normalized.startswith("00"):
+                normalized = normalized[2:]
+            # Single leading zero trunk prefix (e.g. 09876543210) → drop it
+            elif normalized.startswith("0"):
+                normalized = normalized[1:]
+
+            # Number already carries the country code without '+' (common in
+            # Indian exports: 919876543210). Detected as cc prefix + a
+            # 10-digit national number — prefix '+' instead of producing
+            # +9191…
+            if normalized.startswith(cc_digits) and len(normalized) == len(
+                cc_digits
+            ) + 10:
+                return f"+{normalized}"
 
             return f"{cc}{normalized}"
 

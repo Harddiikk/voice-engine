@@ -17,6 +17,7 @@ from api.services.campaign.errors import (
 from api.services.campaign.rate_limiter import rate_limiter
 from api.services.quota_service import authorize_workflow_run_start
 from api.services.campaign.budget import campaign_budget_exhausted
+from api.services.campaign.lead_quota import lead_quota_remaining
 from api.services.trial_credits import has_free_call_seconds
 from api.utils.common import get_backend_endpoints
 
@@ -106,12 +107,35 @@ class CampaignCallDispatcher:
             await db_client.update_campaign(campaign_id=campaign_id, state="paused")
             return 0
 
+        # Lead quota ("call next N leads"): once the window's quota is used
+        # up, auto-pause. The remaining queued runs keep their state, so a
+        # later resume with a fresh quota continues exactly where this batch
+        # window stopped.
+        quota_remaining = lead_quota_remaining(campaign.orchestrator_metadata)
+        if quota_remaining is not None and quota_remaining <= 0:
+            quota = (campaign.orchestrator_metadata or {}).get("lead_quota")
+            logger.info(
+                f"Campaign {campaign_id}: lead quota of {quota} reached — pausing"
+            )
+            await db_client.append_campaign_log(
+                campaign_id,
+                level="info",
+                event="lead_quota_reached",
+                message=(
+                    f"Lead quota of {quota} reached — campaign paused. "
+                    "Resume with a new lead count to call the next batch."
+                ),
+            )
+            await db_client.update_campaign(campaign_id=campaign_id, state="paused")
+            return 0
+
         # Atomically claim queued runs for processing (thread-safe)
         # This uses SELECT FOR UPDATE SKIP LOCKED to prevent race conditions
         queued_runs = await db_client.claim_queued_runs_for_processing(
             campaign_id=campaign_id,
             scheduled_before=datetime.now(UTC),
             limit=batch_size,
+            new_lead_limit=quota_remaining,
         )
 
         if not queued_runs:
@@ -161,6 +185,13 @@ class CampaignCallDispatcher:
 
                 processed_count += 1
                 processed_run_ids.add(queued_run.id)
+
+                # Lead quota: count first-attempt dispatches only (retries
+                # re-dial leads that were already counted in this window).
+                if quota_remaining is not None and (queued_run.retry_count or 0) == 0:
+                    await db_client.increment_campaign_metadata_counter(
+                        campaign_id, "lead_quota_used"
+                    )
 
                 # Update campaign processed count
                 await db_client.update_campaign(

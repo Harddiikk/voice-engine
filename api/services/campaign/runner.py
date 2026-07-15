@@ -8,6 +8,7 @@ from api.services.campaign.campaign_event_publisher import (
     get_campaign_event_publisher,
 )
 from api.services.campaign.circuit_breaker import circuit_breaker
+from api.services.campaign.lead_quota import open_quota_window
 from api.tasks.arq import enqueue_job
 from api.tasks.function_names import FunctionNames
 
@@ -15,7 +16,9 @@ from api.tasks.function_names import FunctionNames
 class CampaignRunnerService:
     """Orchestrates campaign execution"""
 
-    async def start_campaign(self, campaign_id: int) -> None:
+    async def start_campaign(
+        self, campaign_id: int, call_limit: int | None = None
+    ) -> None:
         """Entry point - updates state to 'syncing' and enqueues sync task"""
         # Get campaign
         campaign = await db_client.get_campaign_by_id(campaign_id)
@@ -26,6 +29,8 @@ class CampaignRunnerService:
             raise ValueError(
                 f"Campaign must be in 'created' state to start, current state: {campaign.state}"
             )
+
+        await self._set_lead_quota(campaign, call_limit)
 
         # Redial campaigns have queued_runs pre-seeded from the parent campaign,
         # so skip source sync and transition straight to 'running'.
@@ -79,7 +84,9 @@ class CampaignRunnerService:
 
         logger.info(f"Campaign {campaign_id} paused")
 
-    async def resume_campaign(self, campaign_id: int) -> None:
+    async def resume_campaign(
+        self, campaign_id: int, call_limit: int | None = None
+    ) -> None:
         """Resumes paused campaign"""
         campaign = await db_client.get_campaign_by_id(campaign_id)
         if not campaign:
@@ -94,6 +101,8 @@ class CampaignRunnerService:
                 f"Campaign must be in 'paused' or 'failed' state to resume, current state: {campaign.state}"
             )
 
+        await self._set_lead_quota(campaign, call_limit)
+
         # Update state to running. Do not queue batch since campaign orchestrator's
         # stale campaign checker would do that if there are pending work.
         await db_client.update_campaign(campaign_id=campaign_id, state="running")
@@ -102,6 +111,18 @@ class CampaignRunnerService:
         await circuit_breaker.reset(campaign_id)
 
         logger.info(f"Campaign {campaign_id} resumed")
+
+    async def _set_lead_quota(self, campaign, call_limit: int | None) -> None:
+        """Open a fresh lead-quota window on start/resume (see open_quota_window)."""
+        meta, changed = open_quota_window(campaign.orchestrator_metadata, call_limit)
+        if changed:
+            await db_client.update_campaign(
+                campaign_id=campaign.id, orchestrator_metadata=meta
+            )
+            logger.info(
+                f"Campaign {campaign.id}: lead quota window set to "
+                f"{call_limit if call_limit else 'unlimited'}"
+            )
 
     async def get_campaign_status(self, campaign_id: int) -> Dict[str, Any]:
         """Returns detailed campaign status"""
