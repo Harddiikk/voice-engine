@@ -162,6 +162,19 @@ class CreateCampaignRequest(BaseModel):
     max_concurrency: Optional[int] = Field(default=None, ge=1, le=100)
     schedule_config: Optional[ScheduleConfigRequest] = None
     circuit_breaker: Optional[CircuitBreakerConfigRequest] = None
+    # Numbers without '+' are auto-prefixed with this during validation/sync.
+    default_country_code: Optional[str] = Field(default="+91", max_length=5)
+
+
+class StartCampaignRequest(BaseModel):
+    """Optional body for start/resume — the "call next N leads" window.
+
+    ``call_limit=N``: dispatch at most N first-attempt leads this run, then
+    auto-pause (retries excluded). Omitted/null: unlimited, clears any
+    previous quota. Each start/resume opens a fresh window.
+    """
+
+    call_limit: Optional[int] = Field(default=None, ge=1, le=1_000_000)
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -202,6 +215,13 @@ class CampaignResponse(BaseModel):
     completed_at: Optional[datetime]
     retry_config: RetryConfigResponse
     max_concurrency: Optional[int] = None
+    # Duplicate-phone rows removed from the upload (set on create only).
+    duplicates_removed: Optional[int] = None
+    # Lead quota for the current run window ("call next N leads"): the cap
+    # set at start/resume and how many first-attempt leads it has consumed.
+    # call_limit None = unlimited.
+    call_limit: Optional[int] = None
+    call_limit_used: int = 0
     schedule_config: Optional[ScheduleConfigResponse] = None
     circuit_breaker: Optional[CircuitBreakerConfigResponse] = None
     executed_count: int = 0
@@ -257,6 +277,7 @@ def _build_campaign_response(
     executed_count: int = 0,
     total_queued_count: int = 0,
     telephony_configuration_name: Optional[str] = None,
+    duplicates_removed: Optional[int] = None,
 ) -> CampaignResponse:
     """Build a CampaignResponse from a campaign model."""
     # Get retry_config from campaign or use defaults
@@ -268,12 +289,20 @@ def _build_campaign_response(
 
     # Get max_concurrency, schedule_config, circuit_breaker from orchestrator_metadata
     max_concurrency = None
+    call_limit = None
+    call_limit_used = 0
     schedule_config = None
     circuit_breaker_config = CircuitBreakerConfigResponse()
     parent_campaign_id = None
     redialed_campaign_id = None
     if campaign.orchestrator_metadata:
         max_concurrency = campaign.orchestrator_metadata.get("max_concurrency")
+        _lead_quota = campaign.orchestrator_metadata.get("lead_quota")
+        if _lead_quota:
+            call_limit = int(_lead_quota)
+        call_limit_used = int(
+            campaign.orchestrator_metadata.get("lead_quota_used", 0) or 0
+        )
         sc = campaign.orchestrator_metadata.get("schedule_config")
         if sc:
             schedule_config = ScheduleConfigResponse(
@@ -305,6 +334,9 @@ def _build_campaign_response(
         completed_at=campaign.completed_at,
         retry_config=RetryConfigResponse(**retry_config),
         max_concurrency=max_concurrency,
+        duplicates_removed=duplicates_removed,
+        call_limit=call_limit,
+        call_limit_used=call_limit_used,
         schedule_config=schedule_config,
         circuit_breaker=circuit_breaker_config,
         executed_count=executed_count,
@@ -451,13 +483,17 @@ async def create_campaign(
         schedule_config=schedule_config,
         circuit_breaker=circuit_breaker_config,
         telephony_configuration_id=telephony_configuration_id,
+        default_country_code=request.default_country_code,
     )
 
     cfg_name = await _get_telephony_configuration_name(
         campaign.telephony_configuration_id, user.selected_organization_id
     )
     return _build_campaign_response(
-        campaign, workflow_name, telephony_configuration_name=cfg_name
+        campaign,
+        workflow_name,
+        telephony_configuration_name=cfg_name,
+        duplicates_removed=validation_result.duplicates_removed or None,
     )
 
 
@@ -502,6 +538,78 @@ async def get_campaigns(
     return CampaignsResponse(campaigns=campaign_responses)
 
 
+class CampaignSourceResponse(BaseModel):
+    """A previously uploaded contact sheet, reusable in a new campaign."""
+
+    source_id: str
+    filename: str
+    total_rows: Optional[int] = None
+    first_used_at: datetime
+    last_used_at: datetime
+    campaigns_count: int
+
+
+class CampaignSourcesResponse(BaseModel):
+    sources: List[CampaignSourceResponse]
+
+
+def _source_display_filename(source_id: str) -> str:
+    """Human filename from a storage key like campaigns/{org}/{uuid}_{name}.csv."""
+    basename = source_id.rsplit("/", 1)[-1]
+    if "_" in basename:
+        return basename.split("_", 1)[1]
+    return basename
+
+
+MAX_SOURCES_IN_DROPDOWN = 15
+
+
+def dedupe_sources_by_filename(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collapse repeated uploads of the same file to ONE dropdown entry.
+
+    Every upload gets a unique storage key, so the raw list shows the same
+    filename once per upload. Keep only the most recent upload per display
+    filename (input is already newest-first), but aggregate how many
+    campaigns used ANY upload of that filename. Capped for the dropdown.
+    """
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for s in sources:
+        name = _source_display_filename(s["source_id"])
+        if name in by_name:
+            by_name[name]["campaigns_count"] += s["campaigns_count"]
+            if s["first_used_at"] < by_name[name]["first_used_at"]:
+                by_name[name]["first_used_at"] = s["first_used_at"]
+        else:
+            by_name[name] = {**s, "filename": name}
+    return list(by_name.values())[:MAX_SOURCES_IN_DROPDOWN]
+
+
+# NOTE: must be declared BEFORE the /{campaign_id} route below, or FastAPI
+# tries to parse "sources" as a campaign id.
+@router.get("/sources")
+async def list_campaign_sources(
+    user: UserModel = Depends(get_user),
+) -> CampaignSourcesResponse:
+    """Previously uploaded contact sheets for the org (for sheet reuse).
+
+    One entry per distinct filename — the latest upload of it — newest first.
+    """
+    sources = await db_client.list_campaign_sources(user.selected_organization_id)
+    return CampaignSourcesResponse(
+        sources=[
+            CampaignSourceResponse(
+                source_id=s["source_id"],
+                filename=s["filename"],
+                total_rows=s["total_rows"],
+                first_used_at=s["first_used_at"],
+                last_used_at=s["last_used_at"],
+                campaigns_count=s["campaigns_count"],
+            )
+            for s in dedupe_sources_by_filename(sources)
+        ]
+    )
+
+
 @router.get("/{campaign_id}")
 async def get_campaign(
     campaign_id: int,
@@ -530,9 +638,10 @@ async def get_campaign(
 @router.post("/{campaign_id}/start")
 async def start_campaign(
     campaign_id: int,
+    request: Optional[StartCampaignRequest] = None,
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
-    """Start campaign execution"""
+    """Start campaign execution (optional body caps this run to N leads)"""
     # Block start if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -556,7 +665,9 @@ async def start_campaign(
 
     # Start the campaign using the runner service
     try:
-        await campaign_runner_service.start_campaign(campaign_id)
+        await campaign_runner_service.start_campaign(
+            campaign_id, call_limit=request.call_limit if request else None
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -852,9 +963,10 @@ async def redial_campaign(
 @router.post("/{campaign_id}/resume")
 async def resume_campaign(
     campaign_id: int,
+    request: Optional[StartCampaignRequest] = None,
     user: UserModel = Depends(get_user),
 ) -> CampaignResponse:
-    """Resume a paused campaign"""
+    """Resume a paused campaign (optional body caps this run to N leads)"""
     # Block resume if the org has no telephony configuration at all.
     configs = await db_client.list_telephony_configurations(
         user.selected_organization_id
@@ -878,7 +990,9 @@ async def resume_campaign(
 
     # Resume the campaign using the runner service
     try:
-        await campaign_runner_service.resume_campaign(campaign_id)
+        await campaign_runner_service.resume_campaign(
+            campaign_id, call_limit=request.call_limit if request else None
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

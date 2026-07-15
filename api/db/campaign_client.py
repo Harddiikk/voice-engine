@@ -25,6 +25,7 @@ class CampaignClient(BaseDBClient):
         schedule_config: Optional[dict] = None,
         circuit_breaker: Optional[dict] = None,
         telephony_configuration_id: Optional[int] = None,
+        default_country_code: Optional[str] = None,
     ) -> CampaignModel:
         """Create a new campaign"""
         async with self.async_session() as session:
@@ -36,6 +37,8 @@ class CampaignClient(BaseDBClient):
                 orchestrator_metadata["schedule_config"] = schedule_config
             if circuit_breaker is not None:
                 orchestrator_metadata["circuit_breaker"] = circuit_breaker
+            if default_country_code:
+                orchestrator_metadata["default_country_code"] = default_country_code
 
             campaign = CampaignModel(
                 name=name,
@@ -692,11 +695,85 @@ class CampaignClient(BaseDBClient):
             result = await session.execute(query)
             return result.scalar() or 0
 
+    async def increment_campaign_metadata_counter(
+        self, campaign_id: int, key: str, delta: int = 1
+    ) -> int:
+        """Atomically increment an integer field in campaign orchestrator_metadata."""
+        async with self.async_session() as session:
+            result = await session.execute(
+                text(
+                    "UPDATE campaigns "
+                    "SET orchestrator_metadata = ("
+                    "        COALESCE(orchestrator_metadata::jsonb, '{}'::jsonb) "
+                    "        || jsonb_build_object("
+                    "            :key, "
+                    "            COALESCE((orchestrator_metadata::jsonb ->> :key)::int, 0) + :delta"
+                    "        )"
+                    "    )::json, "
+                    "    updated_at = :now "
+                    "WHERE id = :campaign_id "
+                    "RETURNING (orchestrator_metadata::jsonb ->> :key)::int"
+                ),
+                {
+                    "campaign_id": campaign_id,
+                    "key": key,
+                    "delta": int(delta),
+                    "now": datetime.now(UTC),
+                },
+            )
+            attempt = result.scalar_one()
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            return attempt
+
+    async def list_campaign_sources(
+        self, organization_id: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Distinct uploaded contact sheets for an org, newest first.
+
+        Backs the "reuse a previous sheet" dropdown on campaign create —
+        ``source_id`` is just an object-storage key, so a new campaign can
+        point at any previously uploaded file.
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(
+                    CampaignModel.source_id,
+                    func.max(CampaignModel.total_rows).label("total_rows"),
+                    func.min(CampaignModel.created_at).label("first_used_at"),
+                    func.max(CampaignModel.created_at).label("last_used_at"),
+                    func.count(CampaignModel.id).label("campaigns_count"),
+                )
+                .where(
+                    CampaignModel.organization_id == organization_id,
+                    CampaignModel.source_type == "csv",
+                    CampaignModel.source_id.isnot(None),
+                    CampaignModel.source_id != "",
+                )
+                .group_by(CampaignModel.source_id)
+                .order_by(func.max(CampaignModel.created_at).desc())
+                .limit(limit)
+            )
+            return [
+                {
+                    "source_id": row.source_id,
+                    "total_rows": row.total_rows,
+                    "first_used_at": row.first_used_at,
+                    "last_used_at": row.last_used_at,
+                    "campaigns_count": row.campaigns_count,
+                }
+                for row in result.all()
+            ]
+
     async def claim_queued_runs_for_processing(
         self,
         campaign_id: int,
         scheduled_before: datetime,
         limit: int = 10,
+        new_lead_limit: int | None = None,
     ) -> list[QueuedRunModel]:
         """
         Atomically claim queued runs for processing using SELECT FOR UPDATE SKIP LOCKED.
@@ -706,6 +783,11 @@ class CampaignClient(BaseDBClient):
         1. Prioritizes scheduled retries that are due
         2. Falls back to regular queued runs if more slots available
         3. Locks selected rows and marks them as 'processing' atomically
+
+        ``new_lead_limit`` caps how many first-attempt (non-retry) runs may be
+        claimed in this batch — the lead-quota gate ("call next N leads").
+        Retries are never capped by it. Regular runs are claimed in ``id``
+        order so "the next N" follows the uploaded sheet order.
 
         Returns: List of claimed QueuedRunModel objects
         """
@@ -735,8 +817,13 @@ class CampaignClient(BaseDBClient):
                 claimed_runs.append(run)
 
             remaining_slots = limit - len(scheduled_runs)
+            # Lead quota: cap first-attempt claims without touching retries.
+            if new_lead_limit is not None:
+                remaining_slots = min(remaining_slots, max(0, new_lead_limit))
 
-            # Then get regular queued runs if we have remaining slots
+            # Then get regular queued runs if we have remaining slots.
+            # id order = uploaded sheet order, so a lead quota always calls
+            # "the next N" deterministically.
             if remaining_slots > 0:
                 regular_query = (
                     select(QueuedRunModel)
@@ -745,7 +832,7 @@ class CampaignClient(BaseDBClient):
                         QueuedRunModel.state == "queued",
                         QueuedRunModel.scheduled_for.is_(None),
                     )
-                    .order_by(func.random())
+                    .order_by(QueuedRunModel.id)
                     .limit(remaining_slots)
                     .with_for_update(skip_locked=True)
                 )

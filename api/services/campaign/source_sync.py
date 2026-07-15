@@ -1,8 +1,13 @@
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from loguru import logger
+
+# GPC is an India-only deployment; numbers without an explicit country code
+# are normalized to +91.
+DEFAULT_COUNTRY_CODE = "+91"
 
 
 @dataclass
@@ -21,6 +26,8 @@ class ValidationResult:
     error: Optional[ValidationError] = None
     headers: Optional[List[str]] = field(default=None, repr=False)
     rows: Optional[List[List[str]]] = field(default=None, repr=False)
+    # Duplicate-phone rows silently dropped during validation (kept rows win).
+    duplicates_removed: int = 0
 
 
 class CampaignSourceSyncService(ABC):
@@ -32,15 +39,91 @@ class CampaignSourceSyncService(ABC):
         return [h.strip().lower() for h in headers]
 
     @staticmethod
+    def normalize_phone_number(
+        phone: str, default_country_code: Optional[str] = DEFAULT_COUNTRY_CODE
+    ) -> str:
+        """Strip spaces/dashes/parens; auto-prefix the country code.
+
+        Handles the formats Indian sheets actually contain: ``98765 43210``,
+        ``09876543210`` (trunk zero), ``919876543210`` (cc without '+'),
+        ``00919876543210`` (international prefix) — all collapse to
+        ``+919876543210``. Numbers already starting with '+' are untouched.
+        """
+        val = (phone or "").strip()
+        if not val:
+            return val
+        normalized = re.sub(r"[\s\-()]", "", val)
+        if normalized.startswith("+"):
+            return normalized
+
+        if default_country_code:
+            cc = default_country_code.strip()
+            if not cc.startswith("+"):
+                cc = "+" + cc
+            cc_digits = cc[1:]
+
+            if normalized.startswith("00"):
+                normalized = normalized[2:]
+            elif normalized.startswith("0"):
+                normalized = normalized[1:]
+
+            # cc already present without '+' (cc + 10-digit national number)
+            if normalized.startswith(cc_digits) and len(normalized) == len(
+                cc_digits
+            ) + 10:
+                return f"+{normalized}"
+
+            return f"{cc}{normalized}"
+
+        return normalized
+
+    @staticmethod
+    def normalize_and_dedupe_rows(
+        rows: List[List[str]],
+        phone_number_idx: int,
+        default_country_code: Optional[str] = DEFAULT_COUNTRY_CODE,
+    ) -> Tuple[List[List[str]], int]:
+        """Normalize every phone in place, then drop later duplicate-phone rows.
+
+        Returns (kept_rows, duplicates_removed). Rows with no/short phone pass
+        through untouched and are never deduped against each other. Kept rows
+        preserve their original order (and thus original row positions).
+        """
+        seen_phones: set = set()
+        kept: List[List[str]] = []
+        duplicates_removed = 0
+        for row in rows:
+            if len(row) <= phone_number_idx or not row[phone_number_idx].strip():
+                kept.append(row)
+                continue
+            normalized = CampaignSourceSyncService.normalize_phone_number(
+                row[phone_number_idx], default_country_code
+            )
+            if normalized in seen_phones:
+                duplicates_removed += 1
+                continue
+            seen_phones.add(normalized)
+            row = list(row)
+            row[phone_number_idx] = normalized
+            kept.append(row)
+        return kept, duplicates_removed
+
+    @staticmethod
     def validate_source_data(
-        headers: List[str], rows: List[List[str]]
+        headers: List[str],
+        rows: List[List[str]],
+        default_country_code: Optional[str] = DEFAULT_COUNTRY_CODE,
     ) -> ValidationResult:
         """
         Validate source data for campaign creation.
 
+        Phone numbers are auto-normalized (default +91) and duplicate-phone
+        rows are silently dropped (first occurrence wins) rather than rejected.
+
         Args:
             headers: List of column headers
             rows: List of data rows (excluding header)
+            default_country_code: prefix for numbers without '+'
 
         Returns:
             ValidationResult with is_valid=True if valid, or error details if invalid
@@ -58,7 +141,14 @@ class CampaignSourceSyncService(ABC):
 
         phone_number_idx = normalized_headers.index("phone_number")
 
-        # Validate phone numbers in all data rows
+        # Normalize + dedupe first, then validate what's left.
+        rows, duplicates_removed = (
+            CampaignSourceSyncService.normalize_and_dedupe_rows(
+                rows, phone_number_idx, default_country_code
+            )
+        )
+
+        # Validate phone numbers in all data rows (post-normalization)
         invalid_rows = []
         for row_idx, row in enumerate(
             rows, start=2
@@ -85,37 +175,12 @@ class CampaignSourceSyncService(ABC):
                 ),
             )
 
-        # Check for duplicate phone numbers
-        seen_phones: dict[str, int] = {}  # phone -> first row where it appeared
-        duplicate_rows = []
-        for row_idx, row in enumerate(rows, start=2):
-            if len(row) <= phone_number_idx:
-                continue
-
-            phone_number = row[phone_number_idx].strip()
-            if not phone_number:
-                continue
-
-            if phone_number in seen_phones:
-                duplicate_rows.append(row_idx)
-            else:
-                seen_phones[phone_number] = row_idx
-
-        if duplicate_rows:
-            if len(duplicate_rows) > 5:
-                rows_str = f"{', '.join(map(str, duplicate_rows[:5]))} and {len(duplicate_rows) - 5} more"
-            else:
-                rows_str = ", ".join(map(str, duplicate_rows))
-
-            return ValidationResult(
-                is_valid=False,
-                error=ValidationError(
-                    message=f"Duplicate phone numbers found in rows: {rows_str}. Phone numbers in a campaign must be unique.",
-                    invalid_rows=duplicate_rows,
-                ),
-            )
-
-        return ValidationResult(is_valid=True, headers=normalized_headers, rows=rows)
+        return ValidationResult(
+            is_valid=True,
+            headers=normalized_headers,
+            rows=rows,
+            duplicates_removed=duplicates_removed,
+        )
 
     @staticmethod
     def validate_template_columns(

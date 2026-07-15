@@ -82,6 +82,21 @@ class CSVSyncService(CampaignSourceSyncService):
         headers = self.normalize_headers(csv_data[0])
         rows = csv_data[1:]
 
+        # Normalize phones (+91 default) and drop duplicate-phone rows —
+        # mirrors validate_source_data so what passed validation is what dials.
+        if "phone_number" in headers:
+            default_cc = (campaign.orchestrator_metadata or {}).get(
+                "default_country_code"
+            )
+            rows, duplicates_removed = self.normalize_and_dedupe_rows(
+                rows, headers.index("phone_number"), default_cc or "+91"
+            )
+            if duplicates_removed:
+                logger.info(
+                    f"Campaign {campaign_id}: dropped {duplicates_removed} "
+                    "duplicate phone number rows during sync"
+                )
+
         # Create hash of file_key for consistent source_uuid prefix
         file_hash = hashlib.md5(file_key.encode()).hexdigest()[:8]
 
