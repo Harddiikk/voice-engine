@@ -73,9 +73,9 @@ class TelephonyConfigurationResponse(BaseModel):
 
     twilio: Optional[TwilioConfigurationResponse] = None
     plivo: Optional[PlivoConfigurationResponse] = None
+    voicelink: Optional[VoiceLinkConfigurationResponse] = None
     vonage: Optional[VonageConfigurationResponse] = None
     vobiz: Optional[VobizConfigurationResponse] = None
-    voicelink: Optional[VoiceLinkConfigurationResponse] = None
     cloudonix: Optional[CloudonixConfigurationResponse] = None
     ari: Optional[ARIConfigurationResponse] = None
     telnyx: Optional[TelnyxConfigurationResponse] = None
@@ -152,8 +152,6 @@ __all__ = [
     "TwilioConfigurationResponse",
     "VobizConfigurationRequest",
     "VobizConfigurationResponse",
-    "VoiceLinkConfigurationRequest",
-    "VoiceLinkConfigurationResponse",
     "VonageConfigurationRequest",
     "VonageConfigurationResponse",
 ]

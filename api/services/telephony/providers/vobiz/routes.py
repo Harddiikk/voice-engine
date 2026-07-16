@@ -81,9 +81,9 @@ async def handle_vobiz_hangup_callback(
         f"[run {workflow_run_id}] Vobiz hangup callback - Headers: {json.dumps(all_headers)}"
     )
 
-    # Parse the callback data from the raw body so signed webhooks can verify
-    # the exact bytes Vobiz sent without draining the request stream first.
-    callback_data, raw_body = await parse_webhook_request(request)
+    # Parse the callback data (Vobiz sends form data or JSON)
+    form_data = await request.form()
+    callback_data = dict(form_data)
 
     # TODO: Remove this debug logging after Vobiz team clarifies webhook authentication
     logger.info(
@@ -93,17 +93,8 @@ async def handle_vobiz_hangup_callback(
         f"[run {workflow_run_id}] Received Vobiz hangup callback {json.dumps(callback_data)}"
     )
 
-    # Verify signature if Vobiz provided any supported signature header.
-    has_vobiz_signature = any(
-        header in all_headers
-        for header in (
-            "x-vobiz-signature-v3",
-            "x-vobiz-signature-ma-v3",
-            "x-vobiz-signature-v2",
-            "x-vobiz-signature-ma-v2",
-        )
-    )
-    if has_vobiz_signature:
+    # Verify signature if provided
+    if x_vobiz_signature:
         # We need the workflow run to get organization for provider credentials
         workflow_run = await db_client.get_workflow_run_by_id(workflow_run_id)
         if not workflow_run:
@@ -123,15 +114,20 @@ async def handle_vobiz_hangup_callback(
             workflow_run, workflow.organization_id
         )
 
+        # Get raw body for signature verification
+        raw_body = await request.body()
+        webhook_body = raw_body.decode("utf-8")
+
         # Verify signature
         backend_endpoint, _ = await get_backend_endpoints()
         webhook_url = f"{backend_endpoint}/api/v1/telephony/vobiz/hangup-callback/{workflow_run_id}"
 
-        is_valid = await provider.verify_inbound_signature(
+        is_valid = await provider.verify_webhook_signature(
             webhook_url,
             callback_data,
-            all_headers,
-            raw_body,
+            x_vobiz_signature,
+            x_vobiz_timestamp,
+            webhook_body,
         )
 
         if not is_valid:
@@ -210,9 +206,9 @@ async def handle_vobiz_ring_callback(
         f"[run {workflow_run_id}] Vobiz ring callback - Headers: {json.dumps(all_headers)}"
     )
 
-    # Parse the callback data from the raw body so signed webhooks can verify
-    # the exact bytes Vobiz sent without draining the request stream first.
-    callback_data, raw_body = await parse_webhook_request(request)
+    # Parse the callback data
+    form_data = await request.form()
+    callback_data = dict(form_data)
 
     # TODO: Remove this debug logging after Vobiz team clarifies webhook authentication
     logger.info(
@@ -223,17 +219,8 @@ async def handle_vobiz_ring_callback(
         f"[run {workflow_run_id}] Received Vobiz ring callback {json.dumps(callback_data)}"
     )
 
-    # Verify signature if Vobiz provided any supported signature header.
-    has_vobiz_signature = any(
-        header in all_headers
-        for header in (
-            "x-vobiz-signature-v3",
-            "x-vobiz-signature-ma-v3",
-            "x-vobiz-signature-v2",
-            "x-vobiz-signature-ma-v2",
-        )
-    )
-    if has_vobiz_signature:
+    # Verify signature if provided
+    if x_vobiz_signature:
         # We need the workflow run to get organization for provider credentials
         workflow_run = await db_client.get_workflow_run_by_id(workflow_run_id)
         if not workflow_run:
@@ -253,17 +240,22 @@ async def handle_vobiz_ring_callback(
             workflow_run, workflow.organization_id
         )
 
+        # Get raw body for signature verification
+        raw_body = await request.body()
+        webhook_body = raw_body.decode("utf-8")
+
         # Verify signature
         backend_endpoint, _ = await get_backend_endpoints()
         webhook_url = (
             f"{backend_endpoint}/api/v1/telephony/vobiz/ring-callback/{workflow_run_id}"
         )
 
-        is_valid = await provider.verify_inbound_signature(
+        is_valid = await provider.verify_webhook_signature(
             webhook_url,
             callback_data,
-            all_headers,
-            raw_body,
+            x_vobiz_signature,
+            x_vobiz_timestamp,
+            webhook_body,
         )
 
         if not is_valid:
@@ -319,10 +311,9 @@ async def handle_vobiz_hangup_callback_by_workflow(
     )
 
     try:
-        callback_data, raw_body = await parse_webhook_request(request)
+        callback_data, _ = await parse_webhook_request(request)
     except ValueError:
         callback_data = {}
-        raw_body = ""
 
     call_uuid = callback_data.get("CallUUID") or callback_data.get("call_uuid")
     logger.info(
@@ -364,24 +355,18 @@ async def handle_vobiz_hangup_callback_by_workflow(
         workflow_run, workflow.organization_id
     )
 
-    has_vobiz_signature = any(
-        header in all_headers
-        for header in (
-            "x-vobiz-signature-v3",
-            "x-vobiz-signature-ma-v3",
-            "x-vobiz-signature-v2",
-            "x-vobiz-signature-ma-v2",
-        )
-    )
-    if has_vobiz_signature:
+    if x_vobiz_signature:
+        raw_body = await request.body()
+        webhook_body = raw_body.decode("utf-8")
         backend_endpoint, _ = await get_backend_endpoints()
         webhook_url = f"{backend_endpoint}/api/v1/telephony/vobiz/hangup-callback/workflow/{workflow_id}"
 
-        is_valid = await provider.verify_inbound_signature(
+        is_valid = await provider.verify_webhook_signature(
             webhook_url,
             callback_data,
-            all_headers,
-            raw_body,
+            x_vobiz_signature,
+            x_vobiz_timestamp,
+            webhook_body,
         )
 
         if not is_valid:

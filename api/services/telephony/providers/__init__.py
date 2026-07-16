@@ -13,6 +13,6 @@ from api.services.telephony.providers import (  # noqa: F401  -- import for side
     telnyx,
     twilio,
     vobiz,
-    voicelink,
     vonage,
 )
+from api.services.telephony.providers import voicelink  # GPC VoiceLink

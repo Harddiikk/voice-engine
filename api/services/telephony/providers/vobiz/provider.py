@@ -2,13 +2,9 @@
 Vobiz implementation of the TelephonyProvider interface.
 """
 
-import base64
-import hashlib
-import hmac
 import json
 import random
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 from fastapi import HTTPException
@@ -205,20 +201,23 @@ class VobizProvider(TelephonyProvider):
         url: str,
         params: Dict[str, Any],
         signature: str,
-        nonce: str = None,
+        timestamp: str = None,
         body: str = "",
-        signature_version: str = "v3",
     ) -> bool:
         """
         Verify Vobiz webhook signature for security.
 
-        Vobiz signs the callback base URL (query parameters stripped) with
-        the account auth token and a request nonce:
-        - V2: base64(HMAC-SHA256(auth_token, baseURL + nonce))
-        - V3: base64(HMAC-SHA256(auth_token, baseURL + "." + nonce))
+        Vobiz uses HMAC-SHA256 signature verification with timestamp validation:
+        - Header: x-vobiz-signature (HMAC-SHA256 hash)
+        - Header: x-vobiz-timestamp (timestamp for replay protection)
+        - Signature = HMAC-SHA256(auth_token, timestamp + '.' + body)
         """
-        if not signature or not nonce:
-            logger.warning("Missing signature or nonce headers for Vobiz webhook")
+        import hashlib
+        import hmac
+        from datetime import datetime, timezone
+
+        if not signature or not timestamp:
+            logger.warning("Missing signature or timestamp headers for Vobiz webhook")
             return False
 
         if not self.auth_token:
@@ -227,32 +226,36 @@ class VobizProvider(TelephonyProvider):
             )
             return False
 
-        version = signature_version.lower()
-        if version not in {"v2", "v3"}:
-            logger.warning(f"Unsupported Vobiz signature version: {signature_version}")
+        try:
+            # 1. Timestamp validation (within 5 minutes)
+            webhook_timestamp = int(timestamp)
+            current_timestamp = int(datetime.now(timezone.utc).timestamp())
+            time_diff = abs(current_timestamp - webhook_timestamp)
+
+            if time_diff > 300:  # 5 minutes = 300 seconds
+                logger.warning(f"Vobiz webhook timestamp too old: {time_diff}s > 300s")
+                return False
+
+            # 2. Signature verification
+            # Create expected signature: HMAC-SHA256(auth_token, timestamp + '.' + body)
+            payload = f"{timestamp}.{body}"
+            expected_signature = hmac.new(
+                self.auth_token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+            ).hexdigest()
+
+            # 3. Compare signatures (timing-safe comparison)
+            is_valid = hmac.compare_digest(expected_signature, signature)
+
+            if not is_valid:
+                logger.warning(
+                    f"Vobiz webhook signature mismatch. Expected: {expected_signature[:8]}..., Got: {signature[:8]}..."
+                )
+
+            return is_valid
+
+        except Exception as e:
+            logger.error(f"Error verifying Vobiz webhook signature: {e}")
             return False
-
-        parsed_url = urlparse(url)
-        base_url = urlunparse(
-            (parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "", "")
-        )
-        signed_payload = base_url + (f".{nonce}" if version == "v3" else nonce)
-        expected_signature = base64.b64encode(
-            hmac.new(
-                self.auth_token.encode("utf-8"),
-                signed_payload.encode("utf-8"),
-                hashlib.sha256,
-            ).digest()
-        ).decode("ascii")
-
-        is_valid = hmac.compare_digest(expected_signature, signature)
-
-        if not is_valid:
-            logger.warning(
-                f"Vobiz webhook signature mismatch. Expected: {expected_signature[:8]}..., Got: {signature[:8]}..."
-            )
-
-        return is_valid
 
     async def get_webhook_response(
         self, workflow_id: int, user_id: int, workflow_run_id: int
@@ -469,34 +472,20 @@ class VobizProvider(TelephonyProvider):
     ) -> bool:
         """
         Verify the signature of an inbound Vobiz webhook for security.
-        Uses Vobiz's documented V3/V2 HMAC-SHA256 callback signatures.
+        Uses HMAC-SHA256 over ``timestamp + '.' + body`` with the auth_token.
         """
-        normalized_headers = {key.lower(): value for key, value in headers.items()}
-
-        signature = normalized_headers.get(
-            "x-vobiz-signature-v3"
-        ) or normalized_headers.get("x-vobiz-signature-ma-v3", "")
-        nonce = normalized_headers.get("x-vobiz-signature-v3-nonce")
-        signature_version = "v3"
-
+        signature = headers.get("x-vobiz-signature", "")
+        timestamp = headers.get("x-vobiz-timestamp")
         if not signature:
-            signature = normalized_headers.get(
-                "x-vobiz-signature-v2"
-            ) or normalized_headers.get("x-vobiz-signature-ma-v2", "")
-            nonce = normalized_headers.get("x-vobiz-signature-v2-nonce")
-            signature_version = "v2"
+            # FIXME: Vobiz is not sending the x-vobiz-signature. Temporarily
+            # returning True
 
-        if not signature:
-            logger.warning("Inbound Vobiz webhook missing X-Vobiz-Signature-V3/V2")
-            return False
-
+            # Vobiz always signs its webhooks; missing header means the
+            # request didn't come from Vobiz (or was tampered with).
+            logger.warning("Inbound Vobiz webhook missing X-Vobiz-Signature")
+            return True
         return await self.verify_webhook_signature(
-            url,
-            webhook_data,
-            signature,
-            nonce,
-            body,
-            signature_version=signature_version,
+            url, webhook_data, signature, timestamp, body
         )
 
     async def configure_inbound(

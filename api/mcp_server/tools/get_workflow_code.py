@@ -18,9 +18,8 @@ from fastapi import HTTPException
 
 from api.db import db_client
 from api.mcp_server.auth import authenticate_mcp_request
-from api.mcp_server.tools._workflow_projection import project_workflow_to_sdk_view
 from api.mcp_server.tracing import traced_tool
-from api.mcp_server.ts_bridge import TsBridgeError
+from api.mcp_server.ts_bridge import TsBridgeError, generate_code
 
 
 @traced_tool
@@ -40,14 +39,31 @@ async def get_workflow_code(workflow_id: int) -> dict[str, Any]:
     if not workflow:
         raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
 
+    # Draft wins over published — editing a draft is the normal flow.
+    # `current_definition` (is_current=True) is the published row, so we
+    # fetch the draft explicitly. If the latest draft was just published,
+    # no draft row exists and we fall through to `released_definition`.
+    draft = await db_client.get_draft_version(workflow_id)
+    released = workflow.released_definition
+
+    if draft is not None and draft.workflow_json:
+        payload = draft.workflow_json
+        source = "draft"
+    elif released is not None and released.workflow_json:
+        payload = released.workflow_json
+        source = "published"
+    else:
+        payload = workflow.workflow_definition or {}
+        source = "legacy"
+
     try:
-        view = await project_workflow_to_sdk_view(workflow)
+        code = await generate_code(payload, workflow_name=workflow.name or "")
     except TsBridgeError as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate code: {e}")
 
     return {
         "workflow_id": workflow_id,
-        "name": view["name"],
-        "version": view["version"],
-        "code": view["code"],
+        "name": workflow.name or "",
+        "version": source,
+        "code": code,
     }

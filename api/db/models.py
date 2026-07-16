@@ -107,17 +107,6 @@ class OrganizationModel(Base):
 
     price_per_second_usd = Column(Float, nullable=True)
 
-    # VoiceLink reseller provisioning (best-effort at signup; see
-    # services/voicelink_clients). status: "provisioned" | "pending".
-    voicelink_client_id = Column(String(64), nullable=True)
-    voicelink_username = Column(String(128), nullable=True)
-    voicelink_status = Column(String(32), nullable=True)
-    voicelink_error = Column(Text, nullable=True)
-    # Fernet-encrypted copy of the signup password, kept ONLY while an org is
-    # not yet provisioned so admin "Create client" can reuse the same platform
-    # password; wiped on success. See services/voicelink_clients/secrets.py.
-    voicelink_provision_secret = Column(Text, nullable=True)
-
     # Relationships
     users = relationship(
         "UserModel",
@@ -363,32 +352,6 @@ class WorkflowDefinitionModel(Base):
     workflow_runs = relationship("WorkflowRunModel", back_populates="definition")
 
 
-class FolderModel(Base):
-    """A folder for grouping workflows (agents) within an organization.
-
-    Folders are flat (no nesting) and org-scoped. A workflow belongs to at
-    most one folder via ``WorkflowModel.folder_id``; a NULL folder_id means
-    the workflow is "Uncategorized".
-    """
-
-    __tablename__ = "folders"
-
-    id = Column(Integer, primary_key=True, index=True)
-    organization_id = Column(
-        Integer, ForeignKey("organizations.id"), nullable=False, index=True
-    )
-    organization = relationship("OrganizationModel")
-    name = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
-
-    workflows = relationship("WorkflowModel", back_populates="folder")
-
-    # Folder names must be unique within an organization.
-    __table_args__ = (
-        UniqueConstraint("organization_id", "name", name="uq_folder_org_name"),
-    )
-
-
 class WorkflowModel(Base):
     __tablename__ = "workflows"
     id = Column(Integer, primary_key=True, index=True)
@@ -403,15 +366,6 @@ class WorkflowModel(Base):
     user = relationship("UserModel", back_populates="workflows")
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     organization = relationship("OrganizationModel")
-    # Optional folder for grouping in the agents list. NULL = "Uncategorized".
-    # ON DELETE SET NULL: deleting a folder un-files its agents, never deletes them.
-    folder_id = Column(
-        Integer,
-        ForeignKey("folders.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    folder = relationship("FolderModel", back_populates="workflows")
     name = Column(String, index=True, nullable=False)
     status = Column(
         Enum(*[status.value for status in WorkflowStatus], name="workflow_status"),
