@@ -51,6 +51,11 @@ class Edge:
         self.data = data
 
     def get_function_name(self):
+        # _function_name is assigned at graph build time (uniquified within
+        # the source node); fall back to the raw slug for standalone edges.
+        return getattr(self, "_function_name", None) or self._slug()
+
+    def _slug(self):
         return re.sub(r"[^a-z0-9]", "_", self.label.lower())
 
     def __eq__(self, other):
@@ -125,7 +130,18 @@ class WorkflowGraph:
             # Add to the edge list
             self.edges.append(edge)
 
-            # Add to the source node's outgoing edges
+            # Add to the source node's outgoing edges. Uniquify the edge's
+            # function name within the node: two same-label edges out of one
+            # node would otherwise emit duplicate function declarations,
+            # which Gemini Live rejects with an opaque websocket 1011
+            # "Internal error" that kills the call at connect (hit live on
+            # WF26, 2026-07-16 — two 'Move to probe' edges from the start
+            # node). Existing names stay unchanged; only collisions get a
+            # target-node suffix.
+            existing = {ed.get_function_name() for ed in source_node.out_edges}
+            edge._function_name = edge._slug()
+            if edge._function_name in existing:
+                edge._function_name = f"{edge._function_name}_to_{edge.target}"
             source_node.out_edges.append(edge)
 
             # Set up the node references for backward compatibility
