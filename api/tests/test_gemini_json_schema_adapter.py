@@ -3,6 +3,7 @@ from unittest.mock import patch
 from google.genai.types import GenerateContentConfig, LiveConnectConfig
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.processors.aggregators.llm_context import LLMContext
 
 from api.services.configuration.registry import ServiceProviders
 from api.services.pipecat.gemini_json_schema_adapter import (
@@ -158,3 +159,109 @@ def test_gemini_live_config_accepts_json_schema_tools():
     # Gemini Live validates tools through LiveConnectConfig rather than
     # GenerateContentConfig; it must also accept the raw JSON Schema payload.
     LiveConnectConfig(tools=tools)
+
+
+# ---------------------------------------------------------------------------
+# Orphaned-function-turn stripping (guards the Gemini "function call turn must
+# come immediately after a user turn or after a function response turn" 400 that
+# crashed realtime calls on every node transition).
+# ---------------------------------------------------------------------------
+
+
+def _messages_with_function_turn():
+    """A conversation carrying a move_to_* tool call + its result."""
+    return [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "move_to_qualification",
+                        "arguments": "{}",
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"status": "done"}'},
+        {"role": "user", "content": "yes please"},
+    ]
+
+
+def _has_function_parts(messages) -> bool:
+    for m in messages:
+        for p in getattr(m, "parts", None) or []:
+            if getattr(p, "function_call", None) or getattr(
+                p, "function_response", None
+            ):
+                return True
+    return False
+
+
+def _all_text(messages) -> str:
+    return " ".join(
+        p.text
+        for m in messages
+        for p in (getattr(m, "parts", None) or [])
+        if getattr(p, "text", None)
+    )
+
+
+def test_tool_less_context_strips_orphaned_function_turns():
+    # No tools declared: this is an out-of-band / classifier context. Any
+    # function turn in it is a stray leftover that would trigger the 400.
+    context = LLMContext(messages=_messages_with_function_turn())
+
+    params = DograhGeminiJSONSchemaAdapter().get_llm_invocation_params(context)
+
+    assert not _has_function_parts(params["messages"])
+    # The surrounding conversation text is preserved so extraction/summary/
+    # classification still have something to work with.
+    text = _all_text(params["messages"])
+    assert "hi" in text
+    assert "yes please" in text
+
+
+def test_tool_less_context_with_only_a_function_call_drops_that_turn():
+    context = LLMContext(
+        messages=[
+            {"role": "user", "content": "hello"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "move_to_end", "arguments": "{}"},
+                    }
+                ],
+            },
+        ]
+    )
+
+    params = DograhGeminiJSONSchemaAdapter().get_llm_invocation_params(context)
+
+    assert not _has_function_parts(params["messages"])
+    assert "hello" in _all_text(params["messages"])
+
+
+def test_tool_bearing_context_preserves_function_turns():
+    # A real function-calling conversation (the non-realtime Gemini main LLM,
+    # or a Gemini Live node with tools) must keep its function turns intact.
+    tools = ToolsSchema(
+        standard_tools=[
+            FunctionSchema(
+                name="move_to_qualification",
+                description="Advance the call.",
+                properties={},
+                required=[],
+            )
+        ]
+    )
+    context = LLMContext(messages=_messages_with_function_turn(), tools=tools)
+
+    params = DograhGeminiJSONSchemaAdapter().get_llm_invocation_params(context)
+
+    assert _has_function_parts(params["messages"])
