@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from loguru import logger
 
 from api.db import db_client
-from api.enums import WorkflowRunMode
+from api.enums import CallType, WorkflowRunMode
 from api.services.configuration.registry import ServiceProviders
 from api.services.integrations import (
     IntegrationRuntimeContext,
@@ -736,6 +736,21 @@ async def _run_pipeline(
         voicemail_enabled = bool(campaign_hangup_on_voicemail)
     else:
         voicemail_enabled = voicemail_config.get("enabled", True)
+
+    # Voicemail detection is an OUTBOUND-only concept: it exists so an outbound
+    # call doesn't waste minutes talking to an answering machine. On an INBOUND
+    # call a human dialed us — there is no voicemail to detect, and running the
+    # classifier only adds first-turn latency (its FirstTurnSpeechMonitor + the
+    # classifier's mute/gate interplay delay the bot's reaction to the caller's
+    # first utterance). Never run it on inbound.
+    _ct = getattr(workflow_run, "call_type", None)
+    is_inbound_call = getattr(_ct, "value", _ct) == CallType.INBOUND.value
+    if is_inbound_call and voicemail_enabled:
+        logger.info(
+            f"Voicemail detection skipped for inbound workflow run {workflow_run_id} "
+            "(outbound-only feature)"
+        )
+        voicemail_enabled = False
 
     if voicemail_enabled:
         logger.info(f"Voicemail detection enabled for workflow run {workflow_run_id}")
