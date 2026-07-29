@@ -5,6 +5,7 @@ provider registry — see ProviderSpec.router.
 """
 
 import json
+import re
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -94,7 +95,71 @@ async def handle_voicelink_events(
     return {"status": "success"}
 
 
+def extract_did(raw: str) -> str:
+    """Reduce a called-party value from a VoiceLink ``start`` frame to a number.
+
+    VoiceLink is SIP-backed, so the called party can arrive as a bare number
+    (``919484959244``), a SIP URI (``sip:919484959244@voicelink.co.in``), a
+    user@host pair (``919484959244@10.0.0.1``), or with a ``tel:`` scheme.
+    ``normalize_telephony_address`` passes the URI forms through untouched, so
+    without this the DID lookup misses and the call is hung up with
+    "DID not configured". Strip the scheme and the host before normalizing.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    for scheme in ("sip:", "sips:", "tel:"):
+        if value.lower().startswith(scheme):
+            value = value[len(scheme) :]
+            break
+    # Drop any SIP host part, plus a ``;user=phone``-style parameter tail.
+    value = value.split("@", 1)[0].split(";", 1)[0]
+    return value.strip()
+
+
+def _did_digits(value: str) -> str:
+    """The comparable digit tail of a number — last 10 digits (Indian NSN).
+
+    Runs ``extract_did`` first: digitizing a SIP URI whole would fold the host
+    into the number (``919484959244@10.0.0.1`` → ``...5924410001``) and match
+    the wrong DID, or nothing at all.
+
+    Used only as a fallback when the canonical forms don't match exactly, so a
+    trunk-prefixed or country-code-doubled DID (``0919484959244``) still routes.
+    """
+    digits = re.sub(r"\D", "", extract_did(value))
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+async def _read_start_frame(websocket: WebSocket, max_frames: int = 5) -> dict:
+    """Read frames until the ``start`` event arrives.
+
+    VoiceLink normally sends ``connected`` then ``start``, but tolerate other
+    pre-roll frames (keepalives, a repeated ``connected``) instead of hanging
+    up on the first thing that isn't ``start`` — a hangup here looks exactly
+    like "inbound doesn't connect" and leaves nothing useful in the log.
+    """
+    for _ in range(max_frames):
+        raw = await websocket.receive_text()
+        try:
+            msg = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(f"VoiceLink INBOUND: non-JSON frame ignored: {raw[:200]}")
+            continue
+        if not isinstance(msg, dict):
+            continue
+        event = msg.get("event")
+        if event == "start":
+            return msg
+        logger.info(f"VoiceLink INBOUND: skipping pre-start frame event={event!r}")
+    return {}
+
+
+# Both spellings are registered: a bot URL saved with a trailing slash would
+# otherwise fail the WebSocket handshake at the router with nothing logged by
+# the app at all, which is indistinguishable from "VoiceLink never called us".
 @router.websocket("/ws")
+@router.websocket("/ws/")
 async def voicelink_inbound_ws(websocket: WebSocket) -> None:
     """VoiceLink WS-only INBOUND entrypoint.
 
@@ -126,16 +191,11 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
 
     await websocket.accept()
     try:
-        first_msg = json.loads(await websocket.receive_text())
-        start_msg = (
-            json.loads(await websocket.receive_text())
-            if first_msg.get("event") == "connected"
-            else first_msg
-        )
-        if start_msg.get("event") != "start":
+        start_msg = await _read_start_frame(websocket)
+        if not start_msg:
             logger.error(
-                f"VoiceLink INBOUND: expected 'start', got "
-                f"{start_msg.get('event')!r}: {json.dumps(start_msg)}"
+                "VoiceLink INBOUND: no 'start' event received within the first "
+                "frames — closing"
             )
             await websocket.close(code=4400, reason="Expected start event")
             return
@@ -176,11 +236,22 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
             await websocket.close(code=4400, reason="No DID in start event")
             return
 
-        to_norm = normalize_telephony_address(to_raw, country_hint="IN").canonical
+        # Strip sip:/tel: scheme and any @host BEFORE normalizing — the
+        # normalizer passes URI forms through unchanged, which would make the
+        # DID lookup miss and hang the call up as "DID not configured".
+        to_norm = normalize_telephony_address(
+            extract_did(to_raw), country_hint="IN"
+        ).canonical
         from_norm = (
-            normalize_telephony_address(from_raw, country_hint="IN").canonical
+            normalize_telephony_address(
+                extract_did(from_raw), country_hint="IN"
+            ).canonical
             if from_raw
             else ""
+        )
+        logger.info(
+            f"VoiceLink INBOUND normalized: to={to_raw!r} -> {to_norm!r}, "
+            f"from={from_raw!r} -> {from_norm!r}"
         )
 
         # Route by the called DID alone. VoiceLink's inbound start frame carries
@@ -190,23 +261,58 @@ async def voicelink_inbound_ws(websocket: WebSocket) -> None:
         # boundary; it is globally unique in telephony_phone_numbers. This inline
         # join avoids overlaying the baked db client.
         async with db_client.async_session() as session:
+            base_query = select(
+                TelephonyConfigurationModel, TelephonyPhoneNumberModel
+            ).join(
+                TelephonyPhoneNumberModel,
+                TelephonyPhoneNumberModel.telephony_configuration_id
+                == TelephonyConfigurationModel.id,
+            )
             result = await session.execute(
-                select(TelephonyConfigurationModel, TelephonyPhoneNumberModel)
-                .join(
-                    TelephonyPhoneNumberModel,
-                    TelephonyPhoneNumberModel.telephony_configuration_id
-                    == TelephonyConfigurationModel.id,
-                )
-                .where(
+                base_query.where(
                     TelephonyConfigurationModel.provider == "voicelink",
                     TelephonyPhoneNumberModel.address_normalized == to_norm,
                     TelephonyPhoneNumberModel.is_active.is_(True),
                 )
             )
             row = result.first()
+
+            if not row:
+                # Fallback: match on the last 10 digits. Covers DID spellings
+                # the canonical normalizer can't fix on its own — notably a
+                # trunk-prefixed "0" in front of the country code
+                # ("0919484959244" normalizes to "+91919484959244").
+                tail = _did_digits(to_raw)
+                if tail:
+                    candidates = (
+                        (
+                            await session.execute(
+                                base_query.where(
+                                    TelephonyConfigurationModel.provider
+                                    == "voicelink",
+                                    TelephonyPhoneNumberModel.is_active.is_(True),
+                                )
+                            )
+                        )
+                        .all()
+                    )
+                    for cand in candidates:
+                        if _did_digits(cand[1].address_normalized) == tail:
+                            logger.warning(
+                                f"VoiceLink INBOUND: DID {to_raw!r} matched "
+                                f"{cand[1].address_normalized} by digit-tail "
+                                f"fallback (canonical form was {to_norm!r})"
+                            )
+                            row = cand
+                            break
+
         match = (row[0], row[1]) if row else None
         if not match:
-            logger.error(f"VoiceLink INBOUND: no inbound route for DID {to_norm}")
+            logger.error(
+                f"VoiceLink INBOUND: no inbound route for DID {to_norm} "
+                f"(raw={to_raw!r}) — check the number is added and active on a "
+                f"VoiceLink telephony config"
+            )
             await websocket.close(code=4404, reason="DID not configured")
             return
 

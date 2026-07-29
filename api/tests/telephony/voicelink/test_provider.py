@@ -213,18 +213,31 @@ async def test_api_request_relogins_and_retries_once_on_401():
 
 @pytest.mark.asyncio
 async def test_api_request_does_not_retry_without_login_credentials():
-    provider = _provider(username=None, password=None, bearer_token="static-token")
+    """With a static token and NO identity to fall back to (no config
+    username/password, no reseller env), a 401 is returned as-is — there is
+    nothing to re-authenticate as, so the call must not be retried.
 
-    with (
-        patch.object(provider, "_send_request", new_callable=AsyncMock) as send,
-        patch.object(provider, "_login", new_callable=AsyncMock) as login,
+    Contrast with test_api_request_falls_back_to_reseller_when_client_login_rejected:
+    once a reseller identity IS available, the same 401 DOES trigger a retry.
+    """
+    import os as _os
+
+    with patch.dict(
+        _os.environ,
+        {"VOICELINK_RESELLER_USERNAME": "", "VOICELINK_RESELLER_PASSWORD": ""},
     ):
+        provider = _provider(
+            username=None, password=None, bearer_token="static-token"
+        )
+
+    assert provider._identities == []
+
+    with patch.object(provider, "_send_request", new_callable=AsyncMock) as send:
         send.return_value = (401, {"message": "Unauthenticated"})
 
         status, _ = await provider._api_request("POST", "/v1/add_lead", {})
 
     assert status == 401
-    login.assert_not_awaited()
     assert send.await_count == 1
 
 
@@ -347,3 +360,334 @@ def test_validate_config_rejects_missing_auth():
 
 def test_validate_config_rejects_missing_did():
     assert _provider(did_number=None).validate_config() is False
+
+
+# ======== CREDENTIAL CHAIN ========
+#
+# /v1/auth/login is RESELLER-scoped — a CLIENT username is answered with
+# "Invalid credentials." and can never authenticate. Prod configs nonetheless
+# carry per-client logins, so the provider must fall through to the reseller
+# identity instead of wedging on the client one. The old code only consulted
+# the reseller env when password AND bearer_token were both unset, so a config
+# holding a stale client login stayed broken forever — that is the bug that
+# silently killed every outbound call.
+
+import os
+
+_RESELLER_ENV = {
+    "VOICELINK_RESELLER_USERNAME": "reseller-acct",
+    "VOICELINK_RESELLER_PASSWORD": "reseller-secret",
+}
+
+_LOGIN_PAGE_HTML = (
+    '<!DOCTYPE html><html lang="en"><head>'
+    "<title>Voice Link - Connect &amp; Communicate</title></head>"
+    '<body class="page-signup"><div wire:name="auth.unified-auth"></div></body></html>'
+)
+
+
+@pytest.mark.parametrize(
+    "status,data",
+    [
+        (401, {"message": "Unauthenticated."}),
+        (302, {"raw": ""}),
+        (307, {"raw": ""}),
+        (200, {"raw": _LOGIN_PAGE_HTML}),
+    ],
+)
+def test_is_auth_failure_detects_rejected_token(status, data):
+    assert VoiceLinkProvider._is_auth_failure(status, data) is True
+
+
+@pytest.mark.parametrize(
+    "status,data",
+    [
+        (200, {"status": True, "data": {"outbound_queue_id": 1}}),
+        (201, {"status": True, "data": {}}),
+        (422, {"status": False, "message": "The did_number field is required."}),
+        (500, {"raw": "<html><body>Server Error</body></html>"}),
+    ],
+)
+def test_is_auth_failure_ignores_non_auth_responses(status, data):
+    assert VoiceLinkProvider._is_auth_failure(status, data) is False
+
+
+def test_client_creds_are_tried_first_then_reseller():
+    with patch.dict(os.environ, _RESELLER_ENV):
+        p = _provider(username="amit.4", password="client-pass")
+    assert [i["label"] for i in p._identities] == ["configured", "reseller-env"]
+    assert p._identities[0]["username"] == "amit.4"
+    assert p._identities[1]["username"] == "reseller-acct"
+
+
+def test_config_without_credentials_adopts_reseller_identity():
+    with patch.dict(os.environ, _RESELLER_ENV):
+        p = _provider(username=None, password=None, bearer_token=None)
+    assert p.username == "reseller-acct"
+    assert [i["label"] for i in p._identities] == ["configured"]
+    assert p.validate_config() is True
+
+
+def test_reseller_not_duplicated_when_config_already_holds_it():
+    with patch.dict(os.environ, _RESELLER_ENV):
+        p = _provider(username="reseller-acct", password="reseller-secret")
+    assert len(p._identities) == 1
+
+
+@pytest.mark.asyncio
+async def test_api_request_falls_back_to_reseller_when_client_login_rejected():
+    """THE regression test: a stale CLIENT login must not wedge the provider."""
+    with patch.dict(os.environ, _RESELLER_ENV):
+        p = _provider(username="Hardikk.client", password="dead-pass")
+
+    async def fake_login_as(identity):
+        # VoiceLink rejects client logins; only the reseller authenticates.
+        return "reseller-token" if identity["label"] == "reseller-env" else None
+
+    with (
+        patch.object(p, "_login_as", side_effect=fake_login_as),
+        patch.object(p, "_send_request", new_callable=AsyncMock) as send,
+    ):
+        send.return_value = (201, {"status": True, "data": {"outbound_queue_id": 9}})
+        status, data = await p._api_request("POST", "/v1/add_lead", {})
+
+    assert status == 201
+    assert data["data"]["outbound_queue_id"] == 9
+    assert send.await_args.args[3] == "reseller-token"
+
+
+@pytest.mark.asyncio
+async def test_api_request_retries_whole_chain_on_login_page_redirect():
+    """A dead STORED TOKEN surfaces as a redirect/login-page, not a 401."""
+    with patch.dict(os.environ, _RESELLER_ENV):
+        p = _provider(bearer_token="stale-token")
+
+    with (
+        patch.object(p, "_login_as", AsyncMock(return_value="fresh-token")),
+        patch.object(p, "_send_request", new_callable=AsyncMock) as send,
+    ):
+        send.side_effect = [
+            (200, {"raw": _LOGIN_PAGE_HTML}),  # stale token -> login page
+            (201, {"status": True, "data": {}}),  # after re-auth
+        ]
+        status, _ = await p._api_request("POST", "/v1/add_lead", {})
+
+    assert status == 201
+    assert send.await_args_list[0].args[3] == "stale-token"
+    assert send.await_args_list[1].args[3] == "fresh-token"
+
+
+@pytest.mark.asyncio
+async def test_api_request_does_not_retry_on_non_auth_error():
+    with patch.dict(os.environ, _RESELLER_ENV):
+        p = _provider(bearer_token="token")
+
+    with (
+        patch.object(p, "_send_request", new_callable=AsyncMock) as send,
+        patch.object(p, "_login_as", new_callable=AsyncMock) as login_as,
+    ):
+        send.return_value = (422, {"status": False, "message": "bad request"})
+        status, _ = await p._api_request("POST", "/v1/add_lead", {})
+
+    login_as.assert_not_awaited()
+    assert send.await_count == 1
+    assert status == 422
+
+
+@pytest.mark.asyncio
+async def test_login_raises_only_after_every_identity_rejected():
+    with patch.dict(os.environ, _RESELLER_ENV):
+        p = _provider(username="amit.4", password="client-pass")
+
+    with patch.object(p, "_login_as", AsyncMock(return_value=None)) as login_as:
+        with pytest.raises(HTTPException) as excinfo:
+            await p._login()
+
+    assert login_as.await_count == 2  # both identities were genuinely tried
+    assert "reseller-scoped" in str(excinfo.value.detail)
+
+
+# ======== INBOUND WEBSOCKET BOT SYNC (one URL, many clients) ========
+
+
+def _patch_endpoints():
+    return patch(
+        "api.services.telephony.providers.voicelink.provider.get_backend_endpoints",
+        new_callable=AsyncMock,
+        return_value=("https://api.example.test", "wss://api.example.test"),
+    )
+
+
+def test_inbound_ws_url_carries_no_client_or_did():
+    """One URL must serve every client — the DID in the start frame does the
+    routing, so adding a client never means adding an endpoint."""
+    p = _provider()
+    url = p._inbound_ws_url("wss://api.example.test")
+    assert url == "wss://api.example.test/api/v1/telephony/ws"
+    assert "919484959244" not in url
+    assert "client" not in url
+
+
+@pytest.mark.asyncio
+async def test_configure_inbound_creates_bot_with_the_shared_url():
+    p = _provider(client_id="474")
+
+    with (
+        patch.object(p, "_api_request", new_callable=AsyncMock) as api,
+        _patch_endpoints(),
+    ):
+        api.side_effect = [
+            (200, {"status": True, "data": {"data": []}}),
+            (201, {"status": True, "data": {"id": 17}}),
+        ]
+        result = await p.configure_inbound("+919484959244", "https://x.test/hook")
+
+    assert result.ok is True
+    method, path, payload = api.await_args_list[1].args
+    assert path == "/v1/websocket-bot/create"
+    assert payload["websocket_url"] == "wss://api.example.test/api/v1/telephony/ws"
+    assert payload["client_id"] == "474"
+
+
+@pytest.mark.asyncio
+async def test_configure_inbound_never_hijacks_another_deployments_bot():
+    """Real accounts carry bots for other servers ('Dograh HQ', 'Ria RapidX').
+    Updating one of those would break that deployment's inbound."""
+    p = _provider(client_id="474")
+    listing = (
+        200,
+        {
+            "status": True,
+            "data": {
+                "data": [
+                    {
+                        "id": 443,
+                        "bot_name": "Dograh HQ",
+                        "client_id": 474,
+                        "websocket_url": "wss://168-144-154-134.sslip.io/api/v1/telephony/ws",
+                    },
+                    {
+                        "id": 365,
+                        "bot_name": "Ria RapidX",
+                        "client_id": 474,
+                        "websocket_url": "wss://tunnel.trycloudflare.com/ws/voicelink/did-1",
+                    },
+                ]
+            },
+        },
+    )
+
+    with (
+        patch.object(p, "_api_request", new_callable=AsyncMock) as api,
+        _patch_endpoints(),
+    ):
+        api.side_effect = [listing, (201, {"status": True})]
+        result = await p.configure_inbound("+919484959244", "https://x.test/hook")
+
+    assert result.ok is True
+    # Must CREATE a new bot, not update 443 or 365.
+    assert api.await_args_list[1].args[1] == "/v1/websocket-bot/create"
+
+
+@pytest.mark.asyncio
+async def test_configure_inbound_reuses_our_own_bot():
+    p = _provider(client_id="474")
+    listing = (
+        200,
+        {
+            "status": True,
+            "data": {
+                "data": [
+                    {
+                        "id": 500,
+                        "bot_name": "auto4you-inbound",
+                        "client_id": 474,
+                        "websocket_url": "wss://old.example/api/v1/telephony/ws",
+                    }
+                ]
+            },
+        },
+    )
+
+    with (
+        patch.object(p, "_api_request", new_callable=AsyncMock) as api,
+        _patch_endpoints(),
+    ):
+        api.side_effect = [listing, (200, {"status": True})]
+        result = await p.configure_inbound("+919484959244", "https://x.test/hook")
+
+    assert result.ok is True
+    assert api.await_args_list[1].args[1] == "/v1/websocket-bot/update/500"
+
+
+@pytest.mark.asyncio
+async def test_configure_inbound_ignores_bots_of_other_clients():
+    p = _provider(client_id="1730")
+    listing = (
+        200,
+        {
+            "status": True,
+            "data": {
+                "data": [
+                    {
+                        "id": 500,
+                        "bot_name": "auto4you-inbound",
+                        "client_id": 474,
+                        "websocket_url": "wss://api.example.test/api/v1/telephony/ws",
+                    }
+                ]
+            },
+        },
+    )
+
+    with (
+        patch.object(p, "_api_request", new_callable=AsyncMock) as api,
+        _patch_endpoints(),
+    ):
+        api.side_effect = [listing, (201, {"status": True})]
+        result = await p.configure_inbound("+919484959244", "https://x.test/hook")
+
+    assert result.ok is True
+    assert api.await_args_list[1].args[1] == "/v1/websocket-bot/create"
+
+
+@pytest.mark.asyncio
+async def test_configure_inbound_reports_auth_failure_without_raising():
+    p = _provider()
+
+    with (
+        patch.object(p, "_api_request", new_callable=AsyncMock) as api,
+        _patch_endpoints(),
+    ):
+        api.return_value = (401, {"message": "Unauthenticated."})
+        result = await p.configure_inbound("+919484959244", "https://x.test/hook")
+
+    assert result.ok is False
+    assert "wss://api.example.test/api/v1/telephony/ws" in (result.message or "")
+
+
+@pytest.mark.asyncio
+async def test_configure_inbound_clear_is_a_noop():
+    p = _provider()
+    with patch.object(p, "_api_request", new_callable=AsyncMock) as api:
+        result = await p.configure_inbound("+919484959244", None)
+    assert result.ok is True
+    api.assert_not_awaited()
+
+
+def test_config_loader_passes_client_id_and_channel_cap():
+    from api.services.telephony.providers.voicelink import _config_loader
+
+    loaded = _config_loader(
+        {
+            "api_base": "https://app.voicelink.co.in/api",
+            "did_number": "919484959244",
+            "client_id": "474",
+            "max_concurrent_calls": 4,
+        }
+    )
+    assert loaded["client_id"] == "474"
+    assert loaded["max_concurrent_calls"] == 4
+    p = VoiceLinkProvider(loaded)
+    assert p.client_id == "474"
+    assert p.max_concurrent_calls == 4

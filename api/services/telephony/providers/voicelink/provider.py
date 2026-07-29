@@ -21,6 +21,7 @@ from api.enums import WorkflowRunMode
 from api.services.telephony.base import (
     CallInitiationResult,
     NormalizedInboundData,
+    ProviderSyncResult,
     TelephonyProvider,
 )
 from api.utils.common import get_backend_endpoints
@@ -97,23 +98,55 @@ class VoiceLinkProvider(TelephonyProvider):
         self.username = config.get("username")
         self.password = config.get("password")
         self.bearer_token = config.get("bearer_token")
-        # VoiceLink clients cannot self-login (the /v1/auth/login endpoint is
-        # reseller-scoped); an outbound call is scoped to a client by the DID it
-        # dials from. So when a per-client config carries no usable auth,
-        # authenticate as the reseller from the environment — the client's DID
-        # does the scoping. Reseller-credential configs are unaffected.
-        if not self.password and not self.bearer_token:
-            reseller_pass = os.getenv("VOICELINK_RESELLER_PASSWORD")
-            if reseller_pass:
-                self.username = (
-                    os.getenv("VOICELINK_RESELLER_USERNAME") or self.username
-                )
-                self.password = reseller_pass
+
+        # VoiceLink clients cannot self-login — /v1/auth/login is RESELLER-scoped
+        # and answers a client username with "Invalid credentials.". An outbound
+        # call is scoped to a client by the DID it dials from, so authenticating
+        # as the reseller is always correct; the DID does the scoping.
+        reseller_user = os.getenv("VOICELINK_RESELLER_USERNAME")
+        reseller_pass = os.getenv("VOICELINK_RESELLER_PASSWORD")
+
+        # Legacy behaviour: a config with no usable auth at all adopts the
+        # reseller identity outright, so self.username/password stay meaningful.
+        if not self.password and not self.bearer_token and reseller_pass:
+            self.username = reseller_user or self.username
+            self.password = reseller_pass
+
+        # Ordered credential chain. Whatever the operator filled in is tried
+        # first; the reseller identity is the automatic fallback. This is what
+        # makes "put the client creds here, the reseller creds there" work in
+        # every combination instead of only when the config is left empty —
+        # a config holding a stale CLIENT login used to be stuck on it forever,
+        # because the old fallback only fired when password AND token were unset.
+        self._identities: List[Dict[str, str]] = []
+        if self.username and self.password:
+            self._identities.append(
+                {
+                    "label": "configured",
+                    "username": self.username,
+                    "password": self.password,
+                }
+            )
+        if (
+            reseller_user
+            and reseller_pass
+            and not any(i["username"] == reseller_user for i in self._identities)
+        ):
+            self._identities.append(
+                {
+                    "label": "reseller-env",
+                    "username": reseller_user,
+                    "password": reseller_pass,
+                }
+            )
+        self._identity_index = -1
+
         self.did_number = config.get("did_number")
         self.from_numbers = config.get("from_numbers", [])
         # Trunk channel capacity: how many concurrent calls this config can
         # carry (one number can serve many channels). None → platform default.
         self.max_concurrent_calls = config.get("max_concurrent_calls")
+        self.client_id = config.get("client_id")
 
         # Handle both single number (string) and multiple numbers (list)
         if isinstance(self.from_numbers, str):
@@ -123,51 +156,100 @@ class VoiceLinkProvider(TelephonyProvider):
 
     # ======== AUTH / HTTP HELPERS ========
 
-    async def _login(self) -> str:
-        """Obtain a bearer token via /v1/auth/login. Never logs the password."""
-        if not self.username or not self.password:
-            raise HTTPException(
-                status_code=401,
-                detail=(
-                    "VoiceLink token rejected and no username/password "
-                    "configured for re-login"
-                ),
-            )
+    async def _login_as(self, identity: Dict[str, str]) -> Optional[str]:
+        """Try one identity against /v1/auth/login. Never logs the password.
 
+        Returns the token, or ``None`` when this identity is rejected — a
+        rejection is not fatal because the caller still has the rest of the
+        chain to try.
+        """
         endpoint = f"{self.api_base}/v1/auth/login"
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 endpoint,
-                json={"username": self.username, "password": self.password},
+                json={
+                    "username": identity["username"],
+                    "password": identity["password"],
+                },
+                headers={"Accept": "application/json"},
+                allow_redirects=False,
             ) as response:
                 body = await response.text()
                 if response.status not in (200, 201):
-                    logger.error(
-                        f"VoiceLink login failed for user {self.username}: "
-                        f"HTTP {response.status}"
+                    # Surface VoiceLink's own reason ("Invalid credentials.")
+                    # instead of a bare status code.
+                    try:
+                        reason = (json.loads(body) or {}).get("message") or ""
+                    except json.JSONDecodeError:
+                        reason = ""
+                    logger.warning(
+                        f"VoiceLink login rejected for identity "
+                        f"{identity['label']} (user {identity['username']}): "
+                        f"HTTP {response.status} {reason}"
                     )
-                    raise HTTPException(
-                        status_code=response.status,
-                        detail=f"VoiceLink login failed: HTTP {response.status}",
-                    )
+                    return None
                 try:
                     data = json.loads(body)
                 except json.JSONDecodeError:
-                    raise HTTPException(
-                        status_code=502,
-                        detail="VoiceLink login returned a non-JSON response",
+                    logger.warning(
+                        f"VoiceLink login for identity {identity['label']} "
+                        "returned a non-JSON response"
                     )
+                    return None
 
-        token = (data.get("data") or {}).get("access_token")
+        payload = data.get("data") or {}
+        token = payload.get("access_token") or (payload.get("user") or {}).get(
+            "plain_api_token"
+        )
         if not token:
+            logger.warning(
+                f"VoiceLink login for identity {identity['label']} returned no "
+                "access_token"
+            )
+            return None
+
+        logger.info(
+            f"VoiceLink login succeeded using the {identity['label']} identity "
+            f"(user {identity['username']})"
+        )
+        return token
+
+    async def _login(self) -> str:
+        """Walk the credential chain until one identity authenticates.
+
+        Raises only after EVERY configured identity has been rejected, so a
+        stale per-client login can no longer wedge the provider — the reseller
+        identity behind it still gets its turn.
+        """
+        if not self._identities:
             raise HTTPException(
-                status_code=502,
-                detail="VoiceLink login response missing data.access_token",
+                status_code=401,
+                detail=(
+                    "VoiceLink has no usable credentials: set a username and "
+                    "password on the telephony configuration, or set "
+                    "VOICELINK_RESELLER_USERNAME / VOICELINK_RESELLER_PASSWORD "
+                    "in the environment"
+                ),
             )
 
-        logger.info(f"VoiceLink login succeeded for user {self.username}")
-        self._access_token = token
-        return token
+        tried = []
+        for index, identity in enumerate(self._identities):
+            token = await self._login_as(identity)
+            tried.append(identity["label"])
+            if token:
+                self._access_token = token
+                self._identity_index = index
+                return token
+
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "VoiceLink rejected every configured credential "
+                f"({', '.join(tried)}). Note that CLIENT logins cannot "
+                "authenticate — /v1/auth/login is reseller-scoped — so a "
+                "reseller username/password must be available."
+            ),
+        )
 
     async def _send_request(
         self,
@@ -176,14 +258,24 @@ class VoiceLinkProvider(TelephonyProvider):
         payload: Optional[Dict[str, Any]],
         token: str,
     ) -> Tuple[int, Any]:
-        """Single HTTP exchange against the VoiceLink API."""
+        """Single HTTP exchange against the VoiceLink API.
+
+        Redirects are NOT followed. VoiceLink is a Laravel app that answers an
+        unauthenticated API call with a 302 to its HTML login page; following
+        that redirect turns an auth failure into a "successful" HTTP 200 whose
+        body is a login page — the shape behind the long-standing
+        "add_lead failed: HTTP 200 <!DOCTYPE html>" reports.
+        """
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
+            # Ask for JSON so Laravel returns a 401 envelope rather than a
+            # redirect to the browser login page where it honours the header.
+            "Accept": "application/json",
         }
         async with aiohttp.ClientSession() as session:
             async with session.request(
-                method, url, json=payload, headers=headers
+                method, url, json=payload, headers=headers, allow_redirects=False
             ) as response:
                 body = await response.text()
                 try:
@@ -192,22 +284,68 @@ class VoiceLinkProvider(TelephonyProvider):
                     data = {"raw": body}
                 return response.status, data
 
+    @staticmethod
+    def _is_auth_failure(status: int, data: Any) -> bool:
+        """Detect a VoiceLink authentication failure.
+
+        VoiceLink signals a rejected/expired token three different ways:
+
+        - ``401`` with ``{"message": "Unauthenticated."}`` (JSON-aware clients)
+        - ``302`` redirecting to the HTML login page (browser-style clients)
+        - ``200`` whose body is the login page HTML (when a redirect was
+          followed) — the shape that made a dead token look like a successful
+          dial and produced the misleading "add_lead failed: HTTP 200".
+        """
+        if status == 401:
+            return True
+        if status in (301, 302, 303, 307, 308):
+            return True
+        if isinstance(data, dict):
+            raw = data.get("raw")
+            if isinstance(raw, str) and (
+                "page-signup" in raw
+                or "auth.unified-auth" in raw
+                or "<title>Voice Link" in raw
+            ):
+                return True
+        return False
+
     async def _api_request(
         self,
         method: str,
         path: str,
         payload: Optional[Dict[str, Any]] = None,
     ) -> Tuple[int, Any]:
-        """Authenticated VoiceLink API request with one 401 re-login retry."""
-        token = self._access_token or await self._login()
+        """Authenticated VoiceLink API request that retries down the chain.
+
+        On ANY authentication-failure shape (not just a literal 401 — an
+        expired token usually surfaces as a redirect to the login page), every
+        remaining identity gets a fresh login and one retry. That is what lets
+        a config carrying a dead CLIENT login still complete the call using the
+        reseller identity.
+        """
         url = f"{self.api_base}{path}"
+        token = self._access_token or await self._login()
 
         status, data = await self._send_request(method, url, payload, token)
-        if status == 401 and self.username and self.password:
-            logger.info("VoiceLink token rejected (401); re-logging in and retrying")
+        if not self._is_auth_failure(status, data):
+            return status, data
+
+        logger.info(
+            f"VoiceLink auth rejected (HTTP {status}) on {path}; re-authenticating "
+            "down the credential chain and retrying"
+        )
+        self._access_token = None
+        try:
             token = await self._login()
-            status, data = await self._send_request(method, url, payload, token)
-        return status, data
+        except HTTPException:
+            logger.error(
+                "VoiceLink: every configured credential was rejected — update "
+                "the telephony configuration or the reseller environment vars"
+            )
+            return status, data
+
+        return await self._send_request(method, url, payload, token)
 
     # ======== OUTBOUND CALL ========
 
@@ -341,9 +479,165 @@ class VoiceLinkProvider(TelephonyProvider):
         return [self.did_number] if self.did_number else []
 
     def validate_config(self) -> bool:
-        """Validate VoiceLink configuration."""
-        has_auth = bool(self.bearer_token or (self.username and self.password))
+        """Validate VoiceLink configuration.
+
+        Auth counts as present when a static token is stored OR any identity in
+        the credential chain can log in — which includes the reseller identity
+        from the environment, so a per-client config that carries only a DID is
+        still valid.
+        """
+        has_auth = bool(self.bearer_token or self._identities)
         return bool(self.api_base and self.did_number and has_auth)
+
+    # ======== INBOUND ROUTING ========
+
+    def _inbound_ws_url(self, wss_backend_endpoint: str) -> str:
+        """The ONE media WS endpoint every VoiceLink client points at.
+
+        Deliberately carries no client, DID or run identifier: the inbound
+        handler reads the called DID out of the ``start`` frame and resolves the
+        org + workflow from ``telephony_phone_numbers``. One URL therefore
+        serves every client and every number on the platform — adding a client
+        never means adding an endpoint.
+        """
+        return f"{wss_backend_endpoint}/api/v1/telephony/ws"
+
+    async def configure_inbound(
+        self, address: str, webhook_url: Optional[str]
+    ) -> ProviderSyncResult:
+        """Point this client's VoiceLink WebSocket Bot at our inbound endpoint.
+
+        VoiceLink is WS-only: there is no answer URL to bind. An inbound call to
+        a DID is handed to the WebSocket Bot registered for the owning client,
+        and VoiceLink dials that bot's stored ``websocket_url``. Outbound is
+        unaffected because ``add_lead`` passes a per-call ``websocket_url`` that
+        overrides the bot.
+
+        Clearing is deliberately a no-op: the bot is shared by every DID on the
+        client, so unbinding one number would kill inbound for its siblings —
+        the same reasoning as the Vobiz shared answer_url.
+        """
+        if webhook_url is None:
+            logger.info(
+                f"VoiceLink configure_inbound clear for {address}: skipping "
+                "WebSocket Bot update (the bot is shared across all DIDs on "
+                "this client)"
+            )
+            return ProviderSyncResult(ok=True)
+
+        if not self.validate_config():
+            return ProviderSyncResult(
+                ok=False, message="VoiceLink provider not properly configured"
+            )
+
+        _, wss_backend_endpoint = await get_backend_endpoints()
+        ws_url = self._inbound_ws_url(wss_backend_endpoint)
+
+        try:
+            return await self._sync_websocket_bot(ws_url, webhook_url)
+        except HTTPException as e:
+            # Auth failures raise out of _login — report, never abort the save.
+            return ProviderSyncResult(
+                ok=False,
+                message=(
+                    "Could not reach VoiceLink to register the inbound "
+                    f"WebSocket Bot: {e.detail}"
+                ),
+            )
+        except Exception as e:
+            logger.error(f"VoiceLink configure_inbound failed for {address}: {e}")
+            return ProviderSyncResult(
+                ok=False, message=f"VoiceLink WebSocket Bot sync failed: {e}"
+            )
+
+    async def _sync_websocket_bot(
+        self, ws_url: str, events_url: str
+    ) -> ProviderSyncResult:
+        """Create or update this client's WebSocket Bot so it points at ``ws_url``.
+
+        Reuses an existing bot for the same client where possible — VoiceLink
+        accounts accumulate duplicate active bots otherwise, and which one wins
+        for inbound then becomes a coin flip.
+        """
+        status, data = await self._api_request("GET", "/v1/websocket-bot/list")
+        if self._is_auth_failure(status, data):
+            return ProviderSyncResult(
+                ok=False,
+                message=(
+                    "VoiceLink rejected our credentials, so the inbound "
+                    "WebSocket Bot could not be registered. Fix the VoiceLink "
+                    "credentials, or set the bot's websocket_url to "
+                    f"{ws_url} in the VoiceLink panel."
+                ),
+            )
+
+        existing_id = self._find_bot_id(data, ws_url)
+
+        payload = {
+            "bot_name": "auto4you-inbound",
+            "websocket_url": ws_url,
+            "webhook_url": events_url,
+            "status": 1,
+        }
+        if self.client_id:
+            payload["client_id"] = self.client_id
+
+        if existing_id is not None:
+            path = f"/v1/websocket-bot/update/{existing_id}"
+            action = "updated"
+        else:
+            path = "/v1/websocket-bot/create"
+            action = "created"
+
+        status, data = await self._api_request("POST", path, payload)
+        if status not in (200, 201):
+            logger.error(
+                f"VoiceLink WebSocket Bot {action} failed: HTTP {status} body={data}"
+            )
+            return ProviderSyncResult(
+                ok=False,
+                message=(
+                    f"VoiceLink rejected the WebSocket Bot update (HTTP {status}). "
+                    f"Set the bot's websocket_url to {ws_url} in the VoiceLink "
+                    "panel to enable inbound calls."
+                ),
+            )
+
+        logger.info(f"VoiceLink WebSocket Bot {action}: websocket_url={ws_url}")
+        return ProviderSyncResult(ok=True)
+
+    def _find_bot_id(self, data: Any, ws_url: str) -> Optional[Any]:
+        """Pick the bot to update out of a websocket-bot list response.
+
+        Prefers a bot for THIS client that already carries our URL, then any
+        bot named ``auto4you-inbound`` for this client. Anything else — the
+        'Dograh HQ' or 'Ria RapidX' bots pointing at other deployments — is left
+        alone rather than hijacked.
+        """
+        if not isinstance(data, dict):
+            return None
+        bots = data.get("data")
+        if isinstance(bots, dict):
+            bots = bots.get("data")
+        if not isinstance(bots, list):
+            return None
+
+        mine = [
+            b
+            for b in bots
+            if isinstance(b, dict)
+            and (
+                not self.client_id
+                or str(b.get("client_id")) == str(self.client_id)
+            )
+        ]
+        for bot in mine:
+            if bot.get("websocket_url") == ws_url:
+                return bot.get("id")
+        for bot in mine:
+            if bot.get("bot_name") == "auto4you-inbound":
+                return bot.get("id")
+        return None
 
     async def verify_webhook_signature(
         self, url: str, params: Dict[str, Any], signature: str

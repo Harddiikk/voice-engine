@@ -23,6 +23,10 @@ def _config_loader(value: Dict[str, Any]) -> Dict[str, Any]:
         "bearer_token": value.get("bearer_token"),
         "did_number": value.get("did_number"),
         "from_numbers": value.get("from_numbers", []),
+        # Needed to scope the inbound WebSocket Bot (and KYC) to the right
+        # VoiceLink client — the UI collects it, so it must reach the provider.
+        "client_id": value.get("client_id"),
+        "max_concurrent_calls": value.get("max_concurrent_calls"),
     }
 
 
