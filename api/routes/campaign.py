@@ -10,15 +10,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from api.constants import (
     CAMPAIGN_SPEND_RATE_INR_PER_MINUTE,
     DEFAULT_CAMPAIGN_RETRY_CONFIG,
-    DEFAULT_ORG_CONCURRENCY_LIMIT,
-    TELEPHONY_DEFAULT_MAX_CONCURRENT_CALLS,
 )
 from api.db import db_client
 from api.db.models import UserModel
-from api.enums import OrganizationConfigurationKey
 from api.services.admin.profile import get_org_pricing
 from api.services.admin.suspend_gate import assert_org_not_suspended
 from api.services.auth.depends import get_user
+from api.services.campaign.concurrency import (
+    get_channel_capacity,
+    get_org_concurrent_limit,
+)
 from api.services.campaign.runner import campaign_runner_service
 from api.services.campaign.schedule import default_schedule_config
 from api.services.campaign.source_sync import CampaignSourceSyncService
@@ -33,51 +34,6 @@ from api.services.storage import storage_fs
 router = APIRouter(prefix="/campaign")
 
 
-async def _get_org_concurrent_limit(organization_id: int) -> int:
-    """Get the concurrent call limit for an organization."""
-    try:
-        config = await db_client.get_configuration(
-            organization_id,
-            OrganizationConfigurationKey.CONCURRENT_CALL_LIMIT.value,
-        )
-        if config and config.value:
-            return int(config.value.get("value", DEFAULT_ORG_CONCURRENCY_LIMIT))
-    except Exception:
-        pass
-    return DEFAULT_ORG_CONCURRENCY_LIMIT
-
-
-async def _get_channel_capacity(
-    organization_id: int, telephony_configuration_id: int | None = None
-) -> int:
-    """Concurrent-call capacity (trunk CHANNELS) of the campaign's dialing config.
-
-    One caller-id carries as many concurrent calls as the trunk has channels
-    (``max_concurrent_calls`` on the telephony configuration, platform default
-    when unset) — the number COUNT is not the bound. Returns 0 when the config
-    has no active numbers at all.
-    """
-    try:
-        cfg = None
-        if telephony_configuration_id is not None:
-            cfg = await db_client.get_telephony_configuration_for_org(
-                telephony_configuration_id, organization_id
-            )
-        if cfg is None:
-            cfg = await db_client.get_default_telephony_configuration(organization_id)
-        if cfg:
-            addresses = await db_client.list_active_normalized_addresses_for_config(
-                cfg.id
-            )
-            if not addresses:
-                return 0
-            raw = (cfg.credentials or {}).get("max_concurrent_calls")
-            return int(raw) if raw else TELEPHONY_DEFAULT_MAX_CONCURRENT_CALLS
-    except Exception:
-        pass
-    return 0
-
-
 async def _validate_max_concurrency(
     max_concurrency: int,
     organization_id: int,
@@ -87,8 +43,8 @@ async def _validate_max_concurrency(
 
     Raises HTTPException(400) if the value exceeds the effective limit.
     """
-    org_limit = await _get_org_concurrent_limit(organization_id)
-    channel_capacity = await _get_channel_capacity(
+    org_limit = await get_org_concurrent_limit(organization_id)
+    channel_capacity = await get_channel_capacity(
         organization_id, telephony_configuration_id
     )
     effective_limit = (

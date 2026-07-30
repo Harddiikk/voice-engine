@@ -2,7 +2,7 @@
 
 import { ArrowLeft } from 'lucide-react';
 import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ITimezoneOption } from 'react-timezone-select';
 import { toast } from 'sonner';
 
@@ -181,6 +181,20 @@ export default function EditCampaignPage() {
     const effectiveLimit = channelCapacity > 0
         ? Math.min(orgConcurrentLimit, channelCapacity)
         : orgConcurrentLimit;
+
+    // A campaign saved before the trunk's channel capacity was known (or set)
+    // can carry a concurrency above what the trunk can dial. Pull it back so
+    // saving doesn't 400 and the campaign doesn't ask for channels it lacks.
+    const clampedForLimit = useRef<number | null>(null);
+    useEffect(() => {
+        if (clampedForLimit.current === effectiveLimit) return;
+        clampedForLimit.current = effectiveLimit;
+        if (effectiveLimit <= 0) return;
+        setMaxConcurrency((current) => {
+            const parsed = parseInt(current);
+            return !isNaN(parsed) && parsed > effectiveLimit ? String(effectiveLimit) : current;
+        });
+    }, [effectiveLimit]);
 
     // Handle form submission
     const handleSubmit = async (e: React.FormEvent) => {

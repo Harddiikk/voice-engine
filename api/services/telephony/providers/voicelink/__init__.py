@@ -97,6 +97,21 @@ _UI_METADATA = ProviderUIMetadata(
                 "KYC acts on the reseller's own account."
             ),
         ),
+        ProviderUIField(
+            name="max_concurrent_calls",
+            label="Channel Capacity",
+            type="number",
+            required=False,
+            placeholder="5",
+            description=(
+                "How many simultaneous calls this trunk supports (VoiceLink "
+                "channels). One number carries all of them, so this — not the "
+                "number count — caps campaign concurrency. Must match the "
+                "channels VoiceLink actually allotted: set it too high and the "
+                "carrier rejects the extra calls. Leave blank for the platform "
+                "default (5)."
+            ),
+        ),
     ],
 )
 

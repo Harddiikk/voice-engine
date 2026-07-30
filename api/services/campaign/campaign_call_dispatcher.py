@@ -5,14 +5,12 @@ from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
-from api.constants import (
-    DEFAULT_CAMPAIGN_MAX_CONCURRENCY,
-    DEFAULT_ORG_CONCURRENCY_LIMIT,
-)
+from api.constants import DEFAULT_ORG_CONCURRENCY_LIMIT
 from api.db import db_client
 from api.db.models import QueuedRunModel, WorkflowRunModel
 from api.enums import OrganizationConfigurationKey, WorkflowRunState
 from api.services.campaign.circuit_breaker import circuit_breaker
+from api.services.campaign.concurrency import resolve_campaign_concurrency
 from api.services.campaign.errors import (
     ConcurrentSlotAcquisitionError,
     PhoneNumberPoolExhaustedError,
@@ -573,23 +571,11 @@ class CampaignCallDispatcher:
         Raises:
             ConcurrentSlotAcquisitionError: If slot cannot be acquired within timeout
         """
-        # Get concurrent limit for organization
-        org_concurrent_limit = await self.get_org_concurrent_limit(organization_id)
-
-        # Check for campaign-level max_concurrency in orchestrator_metadata
-        campaign_max_concurrency = None
-        if campaign.orchestrator_metadata:
-            campaign_max_concurrency = campaign.orchestrator_metadata.get(
-                "max_concurrency"
-            )
-
-        # Use the lower of campaign limit and org limit. A campaign that never
-        # set max_concurrency dials at the conservative platform default rather
-        # than saturating the org limit — raise it per-campaign in Advanced
-        # Settings.
-        if campaign_max_concurrency is None:
-            campaign_max_concurrency = DEFAULT_CAMPAIGN_MAX_CONCURRENCY
-        max_concurrent = min(campaign_max_concurrency, org_concurrent_limit)
+        # Campaign setting, org ceiling, and the trunk's CHANNEL capacity all
+        # bound this — smallest wins. Dialing past the channel count makes the
+        # carrier reject the extra calls, so the trunk has to be part of the
+        # runtime decision and not just of creation-time validation.
+        max_concurrent = await resolve_campaign_concurrency(campaign)
 
         # Track wait time for alerting
         wait_start = time.time()

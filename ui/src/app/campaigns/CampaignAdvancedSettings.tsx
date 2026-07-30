@@ -160,8 +160,11 @@ export default function CampaignAdvancedSettings({
                     {channelCapacity > 0 && ` Your telephony configuration supports ${channelCapacity} concurrent call${channelCapacity !== 1 ? 's' : ''} (channels) and the org limit is ${orgConcurrentLimit}.`}
                 </p>
                 {channelCapacity > 0 && channelCapacity < orgConcurrentLimit && (
-                    <p className="text-sm text-amber-600 dark:text-amber-400">
-                        Concurrency is limited to {channelCapacity} by the trunk&apos;s channel capacity. If your trunk has more channels, raise it in <Link href="/telephony-configurations" className="underline font-medium">Telephony Configuration</Link>.
+                    <p className="text-sm text-muted-foreground">
+                        Your trunk has {channelCapacity} channel{channelCapacity !== 1 ? 's' : ''}, so {channelCapacity} is the
+                        most this campaign can dial at once — calls beyond that would be rejected by the carrier. If VoiceLink
+                        has allotted you more channels, update <span className="font-medium">Channel Capacity</span> on the
+                        configuration in <Link href="/telephony-configurations" className="underline font-medium">Telephony Configuration</Link>.
                     </p>
                 )}
                 {fromNumbersCount === 0 && (

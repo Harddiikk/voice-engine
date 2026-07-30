@@ -8,10 +8,10 @@ from sqlalchemy.exc import IntegrityError
 from api.constants import (
     DEFAULT_CAMPAIGN_MAX_CONCURRENCY,
     DEFAULT_CAMPAIGN_RETRY_CONFIG,
-    DEFAULT_ORG_CONCURRENCY_LIMIT,
     DEPLOYMENT_MODE,
     TELEPHONY_DEFAULT_MAX_CONCURRENT_CALLS,
 )
+from api.services.campaign.concurrency import get_org_concurrent_limit
 from api.db import db_client
 from api.db.models import UserModel
 from api.db.telephony_configuration_client import TelephonyConfigurationInUseError
@@ -1310,19 +1310,8 @@ async def get_campaign_defaults(user: UserModel = Depends(get_user)):
     if not user.selected_organization_id:
         raise HTTPException(status_code=400, detail="No organization selected")
 
-    # Get concurrent call limit
-    concurrent_limit = DEFAULT_ORG_CONCURRENCY_LIMIT
-    try:
-        config = await db_client.get_configuration(
-            user.selected_organization_id,
-            OrganizationConfigurationKey.CONCURRENT_CALL_LIMIT.value,
-        )
-        if config and config.value:
-            concurrent_limit = int(
-                config.value.get("value", DEFAULT_ORG_CONCURRENCY_LIMIT)
-            )
-    except Exception:
-        pass
+    # Get concurrent call limit (shared with campaign validation + dispatch)
+    concurrent_limit = await get_org_concurrent_limit(user.selected_organization_id)
 
     # Phone-number count + trunk channel capacity from the org's default
     # telephony config. Channel capacity (max_concurrent_calls, platform

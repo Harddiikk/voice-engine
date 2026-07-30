@@ -120,10 +120,20 @@ export function ConfigFormDialog({
     try {
       const token = await getAccessToken();
 
+      // Clearing a number input leaves "" behind, which fails validation on an
+      // optional int field. Omit those so "blank" means "unset" (and the
+      // backend default applies) rather than a 422.
+      const submitted: FieldValues = { ...values };
+      for (const field of currentProvider.fields) {
+        if (field.type === "number" && submitted[field.name] === "") {
+          delete submitted[field.name];
+        }
+      }
+
       // Build the provider-discriminated config payload from collected values.
       const configPayload = {
         provider: providerName,
-        ...values,
+        ...submitted,
       } as unknown as TelephonyConfigPayload;
 
       if (isEdit && existing) {

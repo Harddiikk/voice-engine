@@ -3,7 +3,7 @@
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ITimezoneOption } from 'react-timezone-select';
 import { toast } from 'sonner';
 
@@ -269,6 +269,22 @@ export default function NewCampaignPage() {
     const effectiveLimit = channelCapacity > 0
         ? Math.min(orgConcurrentLimit, channelCapacity)
         : orgConcurrentLimit;
+
+    // Keep concurrency within what the selected trunk can carry. A value
+    // inherited from the last campaign — or left behind after switching to a
+    // trunk with fewer channels — would otherwise be rejected on submit, or
+    // worse, dial past the channels and have the carrier drop the extra calls.
+    // Keyed on effectiveLimit (not every keystroke) so typing stays untouched.
+    const clampedForLimit = useRef<number | null>(null);
+    useEffect(() => {
+        if (clampedForLimit.current === effectiveLimit) return;
+        clampedForLimit.current = effectiveLimit;
+        if (effectiveLimit <= 0) return;
+        setMaxConcurrency((current) => {
+            const parsed = parseInt(current);
+            return !isNaN(parsed) && parsed > effectiveLimit ? String(effectiveLimit) : current;
+        });
+    }, [effectiveLimit]);
 
     // Handle form submission
     const handleSubmit = async (e: React.FormEvent) => {
