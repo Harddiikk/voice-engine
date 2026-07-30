@@ -101,7 +101,7 @@ export default function CampaignsPage() {
             <PageHeader
                 eyebrow="Outbound"
                 title="Campaigns"
-                subtitle="Manage your bulk workflow execution campaigns."
+                subtitle="Manage your bulk agent calling campaigns."
                 actions={
                     <Button onClick={handleCreateCampaign}>
                         <Plus className="mr-2 h-4 w-4" />
@@ -131,7 +131,7 @@ export default function CampaignsPage() {
                                     <TableRow className="border-border/50 bg-muted/40 hover:bg-muted/40">
                                         <TableHead className="text-label text-muted-foreground">ID</TableHead>
                                         <TableHead className="text-label text-muted-foreground">Name</TableHead>
-                                        <TableHead className="text-label text-muted-foreground">Workflow</TableHead>
+                                        <TableHead className="text-label text-muted-foreground">Agent</TableHead>
                                         <TableHead className="text-label text-muted-foreground">State</TableHead>
                                         <TableHead className="text-label text-muted-foreground">Progress</TableHead>
                                         <TableHead className="text-label text-muted-foreground">Spent</TableHead>

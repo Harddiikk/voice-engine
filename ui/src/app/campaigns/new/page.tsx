@@ -65,7 +65,10 @@ export default function NewCampaignPage() {
     const [orgConcurrentLimit, setOrgConcurrentLimit] = useState<number>(2);
     const [fromNumbersCount, setFromNumbersCount] = useState<number>(0);
     const [defaultChannelCapacity, setDefaultChannelCapacity] = useState<number>(0);
-    const [maxConcurrency, setMaxConcurrency] = useState<string>('');
+    // New campaigns start at a conservative 2 concurrent calls; the user raises
+    // it here (bounded by the org limit / trunk channel capacity).
+    const [defaultMaxConcurrency, setDefaultMaxConcurrency] = useState<number>(2);
+    const [maxConcurrency, setMaxConcurrency] = useState<string>('2');
     const [budgetMinutes, setBudgetMinutes] = useState<string>('');
     // Retry config state
     const [retryEnabled, setRetryEnabled] = useState(true);
@@ -170,6 +173,12 @@ export default function NewCampaignPage() {
                 // trunk's channel count is the real concurrency bound.
                 const capacity = (response.data as { channel_capacity?: number }).channel_capacity;
                 if (typeof capacity === 'number') setDefaultChannelCapacity(capacity);
+                // default_max_concurrency also predates the generated types.
+                const defaultConc = (response.data as { default_max_concurrency?: number }).default_max_concurrency;
+                if (typeof defaultConc === 'number' && defaultConc > 0) {
+                    setDefaultMaxConcurrency(defaultConc);
+                    setMaxConcurrency(String(defaultConc));
+                }
 
                 const last = (response.data as { last_campaign_settings?: {
                     retry_config?: { enabled: boolean; max_retries: number; retry_delay_seconds: number; retry_on_busy: boolean; retry_on_no_answer: boolean; retry_on_voicemail: boolean; retry_on_failed?: boolean; retry_delays_seconds?: number[] | null };
@@ -431,23 +440,23 @@ export default function NewCampaignPage() {
                             </div>
 
                             <div className="space-y-2">
-                                <Label htmlFor="workflow">Workflow</Label>
+                                <Label htmlFor="workflow">Agent</Label>
                                 <Select
                                     value={selectedWorkflowId}
                                     onValueChange={setSelectedWorkflowId}
                                     required
                                 >
                                     <SelectTrigger id="workflow">
-                                        <SelectValue placeholder="Select a workflow" />
+                                        <SelectValue placeholder="Select an agent" />
                                     </SelectTrigger>
                                     <SelectContent>
                                         {isLoadingWorkflows ? (
                                             <SelectItem value="loading" disabled>
-                                                Loading workflows...
+                                                Loading agents...
                                             </SelectItem>
                                         ) : workflows.length === 0 ? (
                                             <SelectItem value="none" disabled>
-                                                No workflows found
+                                                No agents found
                                             </SelectItem>
                                         ) : (
                                             workflows.map((workflow) => (
@@ -579,6 +588,7 @@ export default function NewCampaignPage() {
                                         orgConcurrentLimit={orgConcurrentLimit}
                                         fromNumbersCount={fromNumbersCount}
                                         channelCapacity={channelCapacity}
+                                        defaultConcurrency={defaultMaxConcurrency}
                                         retryEnabled={retryEnabled}
                                         onRetryEnabledChange={setRetryEnabled}
                                         maxRetries={maxRetries}

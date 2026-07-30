@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from api.constants import (
+    DEFAULT_CAMPAIGN_MAX_CONCURRENCY,
     DEFAULT_CAMPAIGN_RETRY_CONFIG,
     DEFAULT_ORG_CONCURRENCY_LIMIT,
     DEPLOYMENT_MODE,
@@ -1293,6 +1294,9 @@ class CampaignDefaultsResponse(BaseModel):
     # on concurrent calls (one caller-id carries many channels). 0 = no
     # active numbers configured.
     channel_capacity: int = 0
+    # Concurrency a new campaign starts at when the user doesn't change it.
+    # Always <= the effective limit; the user raises it in Advanced Settings.
+    default_max_concurrency: int = DEFAULT_CAMPAIGN_MAX_CONCURRENCY
     default_retry_config: RetryConfigResponse
     last_campaign_settings: Optional[LastCampaignSettingsResponse] = None
 
@@ -1388,10 +1392,21 @@ async def get_campaign_defaults(user: UserModel = Depends(get_user)):
     except Exception:
         pass
 
+    # Never advertise a default above what the org/trunk can actually run.
+    effective_limit = (
+        min(concurrent_limit, channel_capacity)
+        if channel_capacity > 0
+        else concurrent_limit
+    )
+    default_max_concurrency = max(
+        1, min(DEFAULT_CAMPAIGN_MAX_CONCURRENCY, effective_limit)
+    )
+
     return CampaignDefaultsResponse(
         concurrent_call_limit=concurrent_limit,
         from_numbers_count=from_numbers_count,
         channel_capacity=channel_capacity,
+        default_max_concurrency=default_max_concurrency,
         default_retry_config=RetryConfigResponse(**DEFAULT_CAMPAIGN_RETRY_CONFIG),
         last_campaign_settings=last_campaign_settings,
     )

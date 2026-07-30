@@ -29,6 +29,8 @@ export interface CampaignAdvancedSettingsProps {
     effectiveLimit: number;
     orgConcurrentLimit: number;
     fromNumbersCount: number;
+    // Concurrency a campaign starts at when the user doesn't change it.
+    defaultConcurrency?: number;
     // Trunk channel capacity — the real concurrency bound (one caller-id
     // carries as many concurrent calls as the trunk has channels).
     channelCapacity?: number;
@@ -119,6 +121,7 @@ export default function CampaignAdvancedSettings({
     maxConcurrency, onMaxConcurrencyChange, effectiveLimit, orgConcurrentLimit, fromNumbersCount,
     budgetMinutes, onBudgetMinutesChange,
     channelCapacity = 0,
+    defaultConcurrency = 2,
     retryEnabled, onRetryEnabledChange, maxRetries, onMaxRetriesChange,
     retryDelaySeconds, onRetryDelaySecondsChange,
     retryOnBusy, onRetryOnBusyChange, retryOnNoAnswer, onRetryOnNoAnswerChange,
@@ -134,6 +137,8 @@ export default function CampaignAdvancedSettings({
     circuitBreakerMinCalls, onCircuitBreakerMinCallsChange,
 }: CampaignAdvancedSettingsProps) {
     const timezoneSelectId = useId();
+    // The default never exceeds what the org/trunk can actually run.
+    const startingConcurrency = Math.max(1, Math.min(defaultConcurrency, effectiveLimit));
 
     return (
         <div className="space-y-6">
@@ -143,14 +148,15 @@ export default function CampaignAdvancedSettings({
                 <Input
                     id="max-concurrency"
                     type="number"
-                    placeholder={`Default: ${effectiveLimit}`}
+                    placeholder={`Default: ${startingConcurrency}`}
                     value={maxConcurrency}
                     onChange={(e) => onMaxConcurrencyChange(e.target.value)}
                     min={1}
                     max={effectiveLimit}
                 />
                 <p className="text-sm text-muted-foreground">
-                    Maximum number of simultaneous calls. Leave empty to use {effectiveLimit}.
+                    Maximum number of simultaneous calls. New campaigns start at {startingConcurrency} —
+                    raise it here (up to {effectiveLimit}) once you&apos;re happy with how the campaign is running.
                     {channelCapacity > 0 && ` Your telephony configuration supports ${channelCapacity} concurrent call${channelCapacity !== 1 ? 's' : ''} (channels) and the org limit is ${orgConcurrentLimit}.`}
                 </p>
                 {channelCapacity > 0 && channelCapacity < orgConcurrentLimit && (

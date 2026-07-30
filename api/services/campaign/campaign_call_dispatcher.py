@@ -5,7 +5,10 @@ from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
-from api.constants import DEFAULT_ORG_CONCURRENCY_LIMIT
+from api.constants import (
+    DEFAULT_CAMPAIGN_MAX_CONCURRENCY,
+    DEFAULT_ORG_CONCURRENCY_LIMIT,
+)
 from api.db import db_client
 from api.db.models import QueuedRunModel, WorkflowRunModel
 from api.enums import OrganizationConfigurationKey, WorkflowRunState
@@ -580,11 +583,13 @@ class CampaignCallDispatcher:
                 "max_concurrency"
             )
 
-        # Use the lower of campaign limit and org limit
-        if campaign_max_concurrency is not None:
-            max_concurrent = min(campaign_max_concurrency, org_concurrent_limit)
-        else:
-            max_concurrent = org_concurrent_limit
+        # Use the lower of campaign limit and org limit. A campaign that never
+        # set max_concurrency dials at the conservative platform default rather
+        # than saturating the org limit — raise it per-campaign in Advanced
+        # Settings.
+        if campaign_max_concurrency is None:
+            campaign_max_concurrency = DEFAULT_CAMPAIGN_MAX_CONCURRENCY
+        max_concurrent = min(campaign_max_concurrency, org_concurrent_limit)
 
         # Track wait time for alerting
         wait_start = time.time()

@@ -319,6 +319,13 @@ DEFAULT_ORG_CONCURRENCY_LIMIT = int(os.getenv("DEFAULT_ORG_CONCURRENCY_LIMIT", 5
 TELEPHONY_DEFAULT_MAX_CONCURRENT_CALLS = int(
     os.getenv("TELEPHONY_DEFAULT_MAX_CONCURRENT_CALLS", "5")
 )
+# Concurrency a NEW campaign dials at when it doesn't set max_concurrency
+# itself. Deliberately conservative — a fresh campaign starts slow and the user
+# raises it per-campaign in Advanced Settings (up to the org limit / trunk
+# channel capacity, whichever is lower).
+DEFAULT_CAMPAIGN_MAX_CONCURRENCY = int(
+    os.getenv("DEFAULT_CAMPAIGN_MAX_CONCURRENCY", "2")
+)
 DEFAULT_CAMPAIGN_RETRY_CONFIG = {
     "enabled": True,
     "max_retries": 1,
