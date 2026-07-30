@@ -347,7 +347,7 @@ DEFAULT_CAMPAIGN_RETRY_CONFIG = {
 # (or anything unparsable) to disable the default — new campaigns then dial
 # at any hour unless the user configures a schedule themselves.
 DEFAULT_CAMPAIGN_CALLING_WINDOW = os.getenv(
-    "DEFAULT_CAMPAIGN_CALLING_WINDOW", "09:00-21:00"
+    "DEFAULT_CAMPAIGN_CALLING_WINDOW", "09:00-20:00"
 )
 DEFAULT_CAMPAIGN_CALLING_TIMEZONE = os.getenv(
     "DEFAULT_CAMPAIGN_CALLING_TIMEZONE", "Asia/Kolkata"
@@ -366,6 +366,22 @@ DEFAULT_CIRCUIT_BREAKER_CONFIG = {
     "window_seconds": 120,  # 2-minute sliding window
     "min_calls_in_window": 20,  # don't trip until at least 20 outcomes
 }
+
+# Adaptive concurrency. A tripped circuit breaker used to pause the campaign
+# outright, which turns a recoverable problem (trunk busier than we thought,
+# carrier throttling us) into a dead campaign nobody notices until they check.
+# Instead, halve the campaign's concurrency and keep dialing; pause only when
+# it is already down to one call at a time and STILL failing, i.e. the problem
+# clearly isn't how hard we're pushing.
+CAMPAIGN_ADAPTIVE_CONCURRENCY = (
+    os.getenv("CAMPAIGN_ADAPTIVE_CONCURRENCY", "true").lower() == "true"
+)
+# Consecutive successful calls before a throttled campaign steps back up one
+# slot. Recovery is deliberately slower than degradation: we drop by half on
+# trouble but climb back one at a time.
+CAMPAIGN_CONCURRENCY_RECOVERY_SUCCESSES = int(
+    os.getenv("CAMPAIGN_CONCURRENCY_RECOVERY_SUCCESSES", "10")
+)
 
 
 TURN_SECRET = os.getenv("TURN_SECRET")

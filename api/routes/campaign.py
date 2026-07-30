@@ -17,6 +17,7 @@ from api.services.admin.profile import get_org_pricing
 from api.services.admin.suspend_gate import assert_org_not_suspended
 from api.services.auth.depends import get_user
 from api.services.campaign.concurrency import (
+    THROTTLE_KEY,
     get_channel_capacity,
     get_org_concurrent_limit,
 )
@@ -234,6 +235,10 @@ class CampaignResponse(BaseModel):
     completed_at: Optional[datetime]
     retry_config: RetryConfigResponse
     max_concurrency: Optional[int] = None
+    # Set only while the adaptive throttle has the campaign running below its
+    # configured concurrency after repeated call failures. None = healthy.
+    throttled_concurrency: Optional[int] = None
+    throttle_reason: Optional[str] = None
     budget_minutes: Optional[int] = None
     schedule_config: Optional[ScheduleConfigResponse] = None
     circuit_breaker: Optional[CircuitBreakerConfigResponse] = None
@@ -321,6 +326,8 @@ def _build_campaign_response(
 
     # Get max_concurrency, schedule_config, circuit_breaker from orchestrator_metadata
     max_concurrency = None
+    throttled_concurrency = None
+    throttle_reason = None
     budget_minutes = None
     schedule_config = None
     circuit_breaker_config = CircuitBreakerConfigResponse()
@@ -351,6 +358,10 @@ def _build_campaign_response(
         consumed_seconds = int(
             campaign.orchestrator_metadata.get("consumed_seconds", 0) or 0
         )
+        throttle = campaign.orchestrator_metadata.get(THROTTLE_KEY)
+        if isinstance(throttle, dict) and throttle.get("value"):
+            throttled_concurrency = int(throttle["value"])
+            throttle_reason = throttle.get("reason")
 
     # Prefer the authoritative completed-run duration SUM; fall back to the
     # legacy counter only when the sum was not supplied by the caller.
@@ -380,6 +391,8 @@ def _build_campaign_response(
         retry_config=RetryConfigResponse(**retry_config),
         budget_minutes=budget_minutes,
         max_concurrency=max_concurrency,
+        throttled_concurrency=throttled_concurrency,
+        throttle_reason=throttle_reason,
         schedule_config=schedule_config,
         circuit_breaker=circuit_breaker_config,
         hangup_on_voicemail=hangup_on_voicemail,
@@ -884,6 +897,10 @@ async def update_campaign(
 
     if request.max_concurrency is not None:
         metadata["max_concurrency"] = request.max_concurrency
+        # The user is asserting a value by hand, which overrides whatever the
+        # adaptive throttle had backed off to — otherwise raising concurrency
+        # in the UI would appear to do nothing.
+        metadata.pop(THROTTLE_KEY, None)
         metadata_changed = True
 
     # budget_minutes: >0 sets the cap; 0 clears it (uncapped).

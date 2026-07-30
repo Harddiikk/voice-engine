@@ -88,7 +88,7 @@ export default function NewCampaignPage() {
     const [scheduleEnabled, setScheduleEnabled] = useState(true);
     const [scheduleTimezone, setScheduleTimezone] = useState<ITimezoneOption | string>('Asia/Kolkata');
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>(
-        Array.from({ length: 7 }, (_, day) => ({ day_of_week: day, start_time: '09:00', end_time: '21:00' })),
+        Array.from({ length: 7 }, (_, day) => ({ day_of_week: day, start_time: '09:00', end_time: '20:00' })),
     );
     // Circuit breaker config state
     const [circuitBreakerEnabled, setCircuitBreakerEnabled] = useState(true);

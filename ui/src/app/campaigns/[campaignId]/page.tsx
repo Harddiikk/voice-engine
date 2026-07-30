@@ -30,6 +30,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Separator } from '@/components/ui/separator';
 import { CampaignRuns } from '@/components/workflow-runs';
 import { useAuth } from '@/lib/auth';
+import { formatCallingWindow } from '@/lib/callingWindow';
 
 export default function CampaignDetailPage() {
     const { user, getAccessToken, redirectToLogin, loading } = useAuth();
@@ -496,6 +497,10 @@ export default function CampaignDetailPage() {
         );
     }
 
+    // Adaptive-throttle fields predate the generated client types.
+    const { throttled_concurrency: throttledTo, throttle_reason: throttleReason } =
+        campaign as { throttled_concurrency?: number | null; throttle_reason?: string | null };
+
     return (
         <PageShell width="wide">
             <div>
@@ -629,6 +634,39 @@ export default function CampaignDetailPage() {
                             <div>
                                 <dt className="text-sm font-medium">Source Type</dt>
                                 <dd className="mt-1 capitalize">{campaign.source_type.replace('-', ' ')}</dd>
+                            </div>
+                            <div>
+                                <dt className="text-sm font-medium">Calling Window</dt>
+                                <dd className="mt-1">
+                                    {formatCallingWindow(campaign.schedule_config)}
+                                    {campaign.schedule_config?.enabled && campaign.schedule_config?.timezone ? (
+                                        <span className="ml-2 text-xs text-muted-foreground">
+                                            ({campaign.schedule_config.timezone})
+                                        </span>
+                                    ) : null}
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                        Calls only go out inside this window; the campaign waits outside it.
+                                    </p>
+                                </dd>
+                            </div>
+                            <div>
+                                <dt className="text-sm font-medium">Concurrency</dt>
+                                <dd className="mt-1">
+                                    {throttledTo ? (
+                                        <>
+                                            <span className="text-amber-600 dark:text-amber-400">
+                                                {throttledTo} (reduced from {campaign.max_concurrency ?? '—'})
+                                            </span>
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                                Calls were failing, so concurrency was lowered automatically to keep
+                                                the campaign running. It steps back up as calls succeed.
+                                                {throttleReason ? ` Trigger: ${throttleReason}.` : ''}
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <>{campaign.max_concurrency ?? 'Default'}</>
+                                    )}
+                                </dd>
                             </div>
                             <div>
                                 <dt className="text-sm font-medium">

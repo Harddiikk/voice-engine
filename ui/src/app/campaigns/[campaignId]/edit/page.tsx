@@ -60,9 +60,12 @@ export default function EditCampaignPage() {
 
     // Schedule config state
     const [scheduleEnabled, setScheduleEnabled] = useState(false);
-    const [scheduleTimezone, setScheduleTimezone] = useState<ITimezoneOption | string>('UTC');
+    // Placeholders until the campaign loads; mirror the platform default
+    // calling window (09:00-20:00 Asia/Kolkata) so a campaign saved without a
+    // schedule doesn't silently land in UTC.
+    const [scheduleTimezone, setScheduleTimezone] = useState<ITimezoneOption | string>('Asia/Kolkata');
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([
-        { day_of_week: 0, start_time: '09:00', end_time: '17:00' },
+        { day_of_week: 0, start_time: '09:00', end_time: '20:00' },
     ]);
     // Circuit breaker config state
     const [circuitBreakerEnabled, setCircuitBreakerEnabled] = useState(true);
@@ -268,7 +271,7 @@ export default function EditCampaignPage() {
                 : {
                     enabled: false,
                     timezone: timezoneValue,
-                    slots: [{ day_of_week: 0, start_time: '09:00', end_time: '17:00' }],
+                    slots: [{ day_of_week: 0, start_time: '09:00', end_time: '20:00' }],
                 };
 
             const circuitBreakerConfig = {

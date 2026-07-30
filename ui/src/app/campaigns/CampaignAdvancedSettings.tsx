@@ -379,7 +379,7 @@ export default function CampaignAdvancedSettings({
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                onClick={() => onTimeSlotsChange([...timeSlots, { day_of_week: 0, start_time: '09:00', end_time: '17:00' }])}
+                                onClick={() => onTimeSlotsChange([...timeSlots, { day_of_week: 0, start_time: '09:00', end_time: '20:00' }])}
                             >
                                 <Plus className="h-4 w-4 mr-1" />
                                 Add Time Slot

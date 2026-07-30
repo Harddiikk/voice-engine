@@ -1,4 +1,4 @@
-"""Campaign circuit breaker for automatic pause on high failure rates.
+"""Campaign circuit breaker: back off on high failure rates, pause as a last resort.
 
 Uses two Redis sorted sets (ZSETs) per campaign — one for failures, one for
 successes — as sliding windows.  ZCARD gives O(1) counts without iterating
@@ -7,6 +7,14 @@ members, keeping the Lua scripts simple.
 A separate capped Redis list (``cb_recent_failures:{campaign_id}``) stores the
 last N failing ``{workflow_run_id, reason, ts}`` entries so the campaign log
 written when the breaker trips can show *which* calls pushed it over.
+
+**Tripping degrades before it stops.** A trip first halves the campaign's
+concurrency and lets it keep dialing (see ``services/campaign/concurrency.py``);
+the campaign is only paused when it is already down to one call at a time and
+still failing, i.e. the failures clearly aren't caused by how hard we push. A
+throttled campaign climbs back one slot at a time after
+``CAMPAIGN_CONCURRENCY_RECOVERY_SUCCESSES`` consecutive successes, so a
+transient carrier problem heals itself without anyone touching the UI.
 """
 
 import json
@@ -16,9 +24,20 @@ from typing import Any, Dict, List, Optional, Tuple
 import redis.asyncio as aioredis
 from loguru import logger
 
-from api.constants import DEFAULT_CIRCUIT_BREAKER_CONFIG, REDIS_URL
+from api.constants import (
+    CAMPAIGN_ADAPTIVE_CONCURRENCY,
+    CAMPAIGN_CONCURRENCY_RECOVERY_SUCCESSES,
+    DEFAULT_CIRCUIT_BREAKER_CONFIG,
+    REDIS_URL,
+)
 from api.db import db_client
 from api.services.campaign.campaign_event_publisher import get_campaign_event_publisher
+from api.services.campaign.concurrency import (
+    apply_throttle,
+    get_configured_concurrency,
+    get_throttle,
+    recover_throttle,
+)
 
 # Cap on the number of recent failure entries kept per campaign — large enough
 # to be useful for debugging a trip, small enough that the JSON details stay
@@ -44,6 +63,11 @@ class CircuitBreaker:
     def _keys(campaign_id: int) -> Tuple[str, str]:
         """Return (failures_key, successes_key) for a campaign."""
         return f"cb_failures:{campaign_id}", f"cb_successes:{campaign_id}"
+
+    @staticmethod
+    def _recovery_key(campaign_id: int) -> str:
+        """Consecutive successes since the last failure, for throttle recovery."""
+        return f"cb_recovery_successes:{campaign_id}"
 
     @staticmethod
     def _recent_failures_key(campaign_id: int) -> str:
@@ -334,7 +358,15 @@ class CircuitBreaker:
                 config=cb_config,
             )
 
+            await self._track_recovery(campaign, is_failure=is_failure)
+
             if tripped and stats:
+                # Back off before giving up: halving concurrency keeps a
+                # recoverable campaign alive instead of parking it in "paused"
+                # until somebody notices.
+                if await self._throttle_instead_of_pause(campaign, stats):
+                    return
+
                 logger.warning(
                     f"Circuit breaker tripped for campaign {campaign_id}, "
                     f"pausing campaign. Stats: {stats}"
@@ -369,6 +401,123 @@ class CircuitBreaker:
 
         except Exception as e:
             logger.error(f"Error in circuit breaker for campaign {campaign_id}: {e}")
+
+    async def _throttle_instead_of_pause(self, campaign, stats: Dict[str, Any]) -> bool:
+        """Halve concurrency and keep dialing. True when the campaign survives.
+
+        False means backing off further isn't possible (already at one call at
+        a time) and the caller should fall through to pausing.
+        """
+        if not CAMPAIGN_ADAPTIVE_CONCURRENCY:
+            return False
+
+        reason = (
+            f"failure rate {stats['failure_rate']:.2%} "
+            f"({stats['failure_count']}/"
+            f"{stats['failure_count'] + stats['success_count']}) "
+            f"exceeded threshold {stats['threshold']:.2%} "
+            f"in {stats['window_seconds']}s window"
+        )
+
+        try:
+            new_value = await apply_throttle(campaign, reason)
+        except Exception as e:
+            logger.error(
+                f"Adaptive throttle failed for campaign {campaign.id}: {e}; "
+                "falling back to pausing"
+            )
+            return False
+
+        if new_value is None:
+            return False  # already at 1 — pausing is the only lever left
+
+        recent_failures = await self._get_recent_failures(campaign.id)
+
+        # Judge the NEW rate, not the one that got us here: without clearing
+        # the window the very next outcome would re-trip on stale failures and
+        # walk the campaign straight down to a pause.
+        await self.reset(campaign.id)
+        try:
+            redis_client = await self._get_redis()
+            await redis_client.delete(self._recovery_key(campaign.id))
+        except Exception:
+            pass  # a stale streak only delays the next step-up
+
+        logger.warning(
+            f"Circuit breaker tripped for campaign {campaign.id}; reduced "
+            f"concurrency to {new_value} instead of pausing. Stats: {stats}"
+        )
+        await db_client.append_campaign_log(
+            campaign_id=campaign.id,
+            level="warning",
+            event="concurrency_reduced",
+            message=(
+                f"Calls were failing ({reason}), so concurrency was reduced to "
+                f"{new_value} and the campaign kept running. It will step back "
+                f"up automatically as calls succeed."
+            ),
+            details={
+                **stats,
+                "new_concurrency": new_value,
+                "recent_failures": recent_failures,
+            },
+        )
+        return True
+
+    async def _track_recovery(self, campaign, *, is_failure: bool) -> None:
+        """Count consecutive successes and step a throttled campaign back up.
+
+        Any failure resets the streak, so recovery needs a genuinely healthy
+        run of calls rather than an alternating success/failure pattern.
+        """
+        if not CAMPAIGN_ADAPTIVE_CONCURRENCY:
+            return
+
+        try:
+            redis_client = await self._get_redis()
+            key = self._recovery_key(campaign.id)
+
+            if is_failure:
+                await redis_client.delete(key)
+                return
+
+            if not get_throttle(campaign):
+                return  # nothing to recover
+
+            streak = await redis_client.incr(key)
+            await redis_client.expire(key, 3600)
+            if streak < CAMPAIGN_CONCURRENCY_RECOVERY_SUCCESSES:
+                return
+
+            await redis_client.delete(key)
+            new_value = await recover_throttle(campaign)
+            if new_value is None:
+                return
+
+            # `campaign` still holds pre-recovery metadata, so decide from the
+            # returned value: reaching the configured ceiling clears it.
+            still_throttled = new_value < get_configured_concurrency(campaign)
+            logger.info(
+                f"Campaign {campaign.id} recovered concurrency to {new_value} "
+                f"after {streak} consecutive successful calls"
+            )
+            await db_client.append_campaign_log(
+                campaign_id=campaign.id,
+                level="info",
+                event="concurrency_restored",
+                message=(
+                    f"Calls are healthy again — concurrency raised to {new_value}"
+                    + ("." if still_throttled else " (back to its configured value).")
+                ),
+                details={
+                    "new_concurrency": new_value,
+                    "consecutive_successes": streak,
+                },
+            )
+        except Exception as e:
+            logger.error(
+                f"Concurrency recovery check failed for campaign {campaign.id}: {e}"
+            )
 
     async def reset(self, campaign_id: int) -> bool:
         """Reset the circuit breaker state for a campaign.

@@ -21,6 +21,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { useAuth } from '@/lib/auth';
+import { formatCallingWindow } from '@/lib/callingWindow';
 
 export default function CampaignsPage() {
     const { user, getAccessToken, redirectToLogin, loading } = useAuth();
@@ -133,6 +134,7 @@ export default function CampaignsPage() {
                                         <TableHead className="text-label text-muted-foreground">Name</TableHead>
                                         <TableHead className="text-label text-muted-foreground">Agent</TableHead>
                                         <TableHead className="text-label text-muted-foreground">State</TableHead>
+                                        <TableHead className="text-label text-muted-foreground">Calling window</TableHead>
                                         <TableHead className="text-label text-muted-foreground">Progress</TableHead>
                                         <TableHead className="text-label text-muted-foreground">Spent</TableHead>
                                         <TableHead className="text-label text-muted-foreground">Created</TableHead>
@@ -140,7 +142,11 @@ export default function CampaignsPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {campaignsData.campaigns.map((campaign) => (
+                                    {campaignsData.campaigns.map((campaign) => {
+                                        // Adaptive-throttle fields predate the generated client types.
+                                        const { throttled_concurrency: throttledTo, throttle_reason: throttleReason } =
+                                            campaign as { throttled_concurrency?: number | null; throttle_reason?: string | null };
+                                        return (
                                         <TableRow
                                             key={campaign.id}
                                             className="cursor-pointer border-border/50 transition-colors duration-200 hover:bg-muted/40"
@@ -153,6 +159,17 @@ export default function CampaignsPage() {
                                                 <Badge variant={getStateBadgeVariant(campaign.state)} className="capitalize">
                                                     {campaign.state}
                                                 </Badge>
+                                                {throttledTo ? (
+                                                    <span
+                                                        className="ml-2 text-xs text-amber-600 dark:text-amber-400"
+                                                        title={throttleReason ?? undefined}
+                                                    >
+                                                        throttled to {throttledTo}
+                                                    </span>
+                                                ) : null}
+                                            </TableCell>
+                                            <TableCell className="py-3.5 whitespace-nowrap text-muted-foreground">
+                                                {formatCallingWindow(campaign.schedule_config)}
                                             </TableCell>
                                             <TableCell className="py-3.5 tabular-nums text-muted-foreground">
                                                 {campaign.executed_count} / {campaign.total_queued_count}
@@ -179,7 +196,8 @@ export default function CampaignsPage() {
                                                 </Button>
                                             </TableCell>
                                         </TableRow>
-                                    ))}
+                                        );
+                                    })}
                                 </TableBody>
                             </Table>
                         </div>

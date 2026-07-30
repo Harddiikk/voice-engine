@@ -16,6 +16,11 @@ from api.services.campaign.source_sync_factory import get_sync_service
 
 PHONE_NUMBER_POOL_EXHAUSTED_COUNTER_KEY = "phone_number_pool_exhausted_attempts"
 MAX_PHONE_NUMBER_POOL_EXHAUSTED_ATTEMPTS = 3
+# Same shape for "every concurrent slot was busy": retry rather than failing the
+# campaign on the first timeout. Each attempt already waits out the acquisition
+# timeout, so the retries are naturally spaced minutes apart.
+CONCURRENT_SLOT_TIMEOUT_COUNTER_KEY = "concurrent_slot_timeout_attempts"
+MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS = 5
 
 
 async def sync_campaign_source(ctx: Dict, campaign_id: int) -> None:
@@ -126,6 +131,12 @@ async def process_campaign_batch(
                 campaign_id=campaign_id,
                 key=PHONE_NUMBER_POOL_EXHAUSTED_COUNTER_KEY,
             )
+            # A batch that dispatched proves slots are available again, so the
+            # timeout streak must not carry over into a later, unrelated one.
+            await db_client.reset_campaign_metadata_counter(
+                campaign_id=campaign_id,
+                key=CONCURRENT_SLOT_TIMEOUT_COUNTER_KEY,
+            )
 
         # Publish batch completed event - orchestrator will handle next batch scheduling
         publisher = await get_campaign_event_publisher()
@@ -142,26 +153,68 @@ async def process_campaign_batch(
         )
 
     except ConcurrentSlotAcquisitionError as e:
+        # Every slot being busy is usually transient — other calls are still up.
+        # The claimed runs were already returned to the queue, so keep the
+        # campaign RUNNING and let the orchestrator's stale-campaign sweep pick
+        # it up again; only fail after this repeats. Killing the campaign on the
+        # first timeout stranded it in "failed" with all its work still pending.
+        attempt = await db_client.increment_campaign_metadata_counter(
+            campaign_id=campaign_id,
+            key=CONCURRENT_SLOT_TIMEOUT_COUNTER_KEY,
+        )
         logger.warning(
-            f"Failed to acquire concurrent slot for campaign {campaign_id}: {e}"
+            f"Failed to acquire concurrent slot for campaign {campaign_id}: {e}; "
+            f"attempt={attempt}/{MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS}"
         )
 
-        # Publish batch failed event with specific error
         publisher = await get_campaign_event_publisher()
+
+        if attempt < MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS:
+            await db_client.append_campaign_log(
+                campaign_id=campaign_id,
+                level="warning",
+                event="concurrent_slot_timeout_retry",
+                message=(
+                    "All concurrent call slots were busy; no calls were lost and "
+                    f"the campaign will try again (attempt {attempt}/"
+                    f"{MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS})"
+                ),
+                details={
+                    "error": str(e),
+                    "attempt": attempt,
+                    "max_attempts": MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS,
+                    "reason": "concurrent_slot_timeout",
+                },
+            )
+            await publisher.publish_batch_completed(
+                campaign_id=campaign_id,
+                processed_count=0,
+                failed_count=0,
+                batch_size=batch_size,
+            )
+            return
+
         await publisher.publish_batch_failed(
             campaign_id=campaign_id,
             error=f"Concurrent slot acquisition timeout: {e}",
             processed_count=0,
         )
 
-        # Update campaign state to failed
         await db_client.update_campaign(campaign_id=campaign_id, state="failed")
         await db_client.append_campaign_log(
             campaign_id=campaign_id,
             level="error",
             event="batch_failed",
-            message=f"Concurrent slot acquisition timeout: {e}",
-            details={"error": str(e), "reason": "concurrent_slot_timeout"},
+            message=(
+                f"Concurrent slot acquisition timeout after {attempt} consecutive "
+                f"attempts: {e}"
+            ),
+            details={
+                "error": str(e),
+                "attempt": attempt,
+                "max_attempts": MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS,
+                "reason": "concurrent_slot_timeout",
+            },
         )
         raise
 

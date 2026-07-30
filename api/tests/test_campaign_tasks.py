@@ -14,7 +14,10 @@ from api.services.campaign.errors import (
     ConcurrentSlotAcquisitionError,
     PhoneNumberPoolExhaustedError,
 )
-from api.tasks.campaign_tasks import process_campaign_batch
+from api.tasks.campaign_tasks import (
+    MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS,
+    process_campaign_batch,
+)
 
 
 class TestProcessCampaignBatchFailureLogs:
@@ -100,8 +103,15 @@ class TestProcessCampaignBatchFailureLogs:
 
     @pytest.mark.asyncio
     async def test_concurrent_slot_timeout_still_logs_specific_event(self):
-        """Regression guard: the existing ConcurrentSlotAcquisitionError branch
-        should keep logging its specific reason."""
+        """Regression guard: the ConcurrentSlotAcquisitionError branch should
+        keep logging its specific reason when it finally gives up.
+
+        A timeout no longer fails the campaign on the FIRST occurrence — busy
+        slots are usually transient, so it retries up to
+        MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS first (covered in
+        test_campaign_adaptive_concurrency.py). This exercises the terminal
+        attempt, which still fails the campaign and names the reason.
+        """
         with (
             patch("api.tasks.campaign_tasks.campaign_call_dispatcher") as mock_disp,
             patch("api.tasks.campaign_tasks.db_client") as mock_db,
@@ -114,6 +124,9 @@ class TestProcessCampaignBatchFailureLogs:
                     organization_id=7, campaign_id=42, wait_time=30.0
                 )
             )
+            mock_db.increment_campaign_metadata_counter = AsyncMock(
+                return_value=MAX_CONCURRENT_SLOT_TIMEOUT_ATTEMPTS
+            )
             mock_db.update_campaign = AsyncMock()
             mock_db.append_campaign_log = AsyncMock()
             mock_pub = AsyncMock()
@@ -122,6 +135,9 @@ class TestProcessCampaignBatchFailureLogs:
             with pytest.raises(ConcurrentSlotAcquisitionError):
                 await process_campaign_batch({}, campaign_id=42)
 
+            mock_db.update_campaign.assert_called_once_with(
+                campaign_id=42, state="failed"
+            )
             mock_db.append_campaign_log.assert_called_once()
             kwargs = mock_db.append_campaign_log.call_args.kwargs
             assert kwargs["event"] == "batch_failed"
