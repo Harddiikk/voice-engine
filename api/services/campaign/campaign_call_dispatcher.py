@@ -163,11 +163,6 @@ class CampaignCallDispatcher:
                 processed_count += 1
                 processed_run_ids.add(queued_run.id)
 
-                # Update campaign processed count
-                await db_client.update_campaign(
-                    campaign_id=campaign_id, processed_rows=campaign.processed_rows + 1
-                )
-
             except asyncio.CancelledError:
                 logger.warning(
                     f"Campaign {campaign_id} batch cancelled; returning claimed "
@@ -176,6 +171,7 @@ class CampaignCallDispatcher:
                 await self._return_unprocessed_claims(
                     queued_runs, processed_run_ids, reason="task_cancelled"
                 )
+                await self._flush_processed_count(campaign_id, processed_count)
                 raise
 
             except PhoneNumberPoolExhaustedError as e:
@@ -189,6 +185,7 @@ class CampaignCallDispatcher:
                     processed_run_ids,
                     reason="phone_number_pool_exhausted",
                 )
+                await self._flush_processed_count(campaign_id, processed_count)
                 # Re-raise to propagate to process_campaign_batch
                 raise
 
@@ -203,6 +200,7 @@ class CampaignCallDispatcher:
                     processed_run_ids,
                     reason="concurrent_slot_acquisition_failed",
                 )
+                await self._flush_processed_count(campaign_id, processed_count)
                 # Re-raise to propagate to process_campaign_batch
                 raise
 
@@ -224,7 +222,30 @@ class CampaignCallDispatcher:
                         f"Failed to mark queued run {queued_run.id} as failed: {update_error}"
                     )
 
+        await self._flush_processed_count(campaign_id, processed_count)
         return processed_count
+
+    async def _flush_processed_count(
+        self, campaign_id: int, processed_count: int
+    ) -> None:
+        """Persist a batch's dispatched-call count in one atomic increment.
+
+        Called on every exit from the dispatch loop — including the paths that
+        re-raise — so a batch that dies part-way still records the calls it did
+        place. Never raises: losing a progress counter must not fail a batch
+        that actually dialed.
+        """
+        if processed_count <= 0:
+            return
+        try:
+            await db_client.increment_campaign_processed_rows(
+                campaign_id, processed_count
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to record {processed_count} processed rows for campaign "
+                f"{campaign_id}: {e}"
+            )
 
     async def _return_unprocessed_claims(
         self,

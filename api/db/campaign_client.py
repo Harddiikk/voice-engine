@@ -523,6 +523,43 @@ class CampaignClient(BaseDBClient):
                 raise
             return attempt
 
+    async def increment_campaign_processed_rows(
+        self, campaign_id: int, delta: int
+    ) -> int:
+        """Atomically add ``delta`` to a campaign's processed_rows counter.
+
+        Read-modify-write from Python loses counts here: process_batch holds one
+        campaign snapshot for the whole batch, so writing
+        ``campaign.processed_rows + 1`` after each dispatch re-wrote the SAME
+        stale value every time and advanced the counter by 1 per BATCH instead
+        of per call. Incrementing in SQL keeps it correct and collapses one
+        write per dispatched call into one per batch.
+        """
+        if delta <= 0:
+            return 0
+        async with self.async_session() as session:
+            result = await session.execute(
+                text(
+                    "UPDATE campaigns "
+                    "SET processed_rows = COALESCE(processed_rows, 0) + :delta, "
+                    "    updated_at = :now "
+                    "WHERE id = :campaign_id "
+                    "RETURNING processed_rows"
+                ),
+                {
+                    "campaign_id": campaign_id,
+                    "delta": int(delta),
+                    "now": datetime.now(UTC),
+                },
+            )
+            total = result.scalar_one()
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            return total
+
     async def reset_campaign_metadata_counter(self, campaign_id: int, key: str) -> None:
         """Remove a counter field from campaign orchestrator_metadata."""
         async with self.async_session() as session:
