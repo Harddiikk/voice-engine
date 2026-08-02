@@ -14,6 +14,7 @@ import {
   RotateCcw,
   ShieldCheck,
   UserPlus,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -161,6 +162,7 @@ export default function ClientDetailPage() {
   const hasFetched = useRef(false);
 
   const [detail, setDetail] = useState<AdminClientDetail | null>(null);
+  const [newTag, setNewTag] = useState("");
   const [audit, setAudit] = useState<AdminAuditEntry[]>([]);
   const [kyc, setKyc] = useState<AdminClientKycStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -644,6 +646,37 @@ export default function ClientDetailPage() {
     }
   };
 
+  // Tags replace rather than merge, so removing one means sending the list
+  // without it. Both handlers therefore compute the full desired list.
+  const saveTags = async (tags: string[]) => {
+    setSubmitting(true);
+    try {
+      const token = await getToken();
+      await updateAdminProfile(token, orgId, { tags });
+      await fetchAll();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save tags");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onAddTag = async () => {
+    const label = newTag.trim().toLowerCase();
+    if (!label) return;
+    const current = detail?.tags ?? [];
+    if (current.includes(label)) {
+      setNewTag("");
+      return;
+    }
+    setNewTag("");
+    await saveTags([...current, label]);
+  };
+
+  const onRemoveTag = async (label: string) => {
+    await saveTags((detail?.tags ?? []).filter((t) => t !== label));
+  };
+
   const onAssignDid = async () => {
     if (!didNumber.trim()) return;
     setSubmitting(true);
@@ -891,6 +924,51 @@ export default function ClientDetailPage() {
                           overridden={planOverridden}
                         />
                       </InfoRow>
+                      <InfoRow label="Tags">
+                        <span className="flex flex-wrap justify-end gap-1.5">
+                          {(detail.tags ?? []).length === 0 && (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                          {(detail.tags ?? []).map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => onRemoveTag(tag)}
+                              disabled={submitting}
+                              title={`Remove “${tag}”`}
+                              className="disabled:opacity-50"
+                            >
+                              <Badge variant="secondary">
+                                {tag}
+                                <X className="ml-1 h-3 w-3" />
+                              </Badge>
+                            </button>
+                          ))}
+                        </span>
+                      </InfoRow>
+                      <div className="mt-2 flex gap-2">
+                        <Input
+                          value={newTag}
+                          onChange={(e) => setNewTag(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              onAddTag();
+                            }
+                          }}
+                          placeholder="Add a tag (e.g. via shreyas)"
+                          className="h-8 text-sm"
+                          disabled={submitting}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={onAddTag}
+                          disabled={submitting || !newTag.trim()}
+                        >
+                          Add
+                        </Button>
+                      </div>
                       <InfoRow label="Features">
                         {detail.features?.api || detail.features?.mcp ? (
                           <span className="flex justify-end gap-1.5">

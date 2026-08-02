@@ -15,6 +15,7 @@ import {
   Database,
   Home,
   Key,
+  LayoutDashboard,
   LogOut,
   type LucideIcon,
   Megaphone,
@@ -104,6 +105,7 @@ const TELEPHONY_WARNING_COPY = "Action required";
 // reachable by URL, and the toggle restores the full nav, because the owner
 // does occasionally need the builder on their own account.
 const OWNER_MODE_URLS = new Set<string>([
+  "/owner",
   "/home",
   "/analytics",
   "/clients",
@@ -231,6 +233,12 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Credits & Billing",
         url: "/credits",
         icon: CreditCard,
+      },
+      {
+        title: "Owner console",
+        url: "/owner",
+        icon: LayoutDashboard,
+        superuserOnly: true,
       },
       {
         title: "Clients",

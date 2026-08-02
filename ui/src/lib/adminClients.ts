@@ -31,6 +31,9 @@ export interface AdminClient {
   live_client_id?: string | null;
   // Remaining call-seconds balance; null = unmetered (unlimited).
   credits_seconds_remaining?: number | null;
+  // Owner-facing segmentation labels ("via shreyas", "gym", "pilot").
+  // Optional so a row from an older backend still renders.
+  tags?: string[];
   // Billing/plan enrichment (added by the richer admin list endpoint). These
   // are optional so the row still renders if the backend has not shipped them.
   effective_plan?: string | null;
@@ -121,6 +124,8 @@ export interface AdminClientDetail {
   // Client plan card + expiry (null = no card / never purchased).
   plan_card?: AdminPlanCard | null;
   plan_expires_at?: string | null;
+  // Owner-facing segmentation labels; optional so an older backend parses.
+  tags?: string[];
   // What the client filled during first-run onboarding (or null).
   onboarding_profile?: Record<string, unknown> | null;
   notes?: AdminClientNote[] | null;
@@ -145,6 +150,9 @@ export interface AdminProfilePatch {
   plan_card?: AdminPlanCard | null;
   // ISO timestamp; null clears back to "never purchased".
   plan_expires_at?: string | null;
+  // Segmentation labels. Send the FULL desired list — this replaces rather
+  // than merges, so a tag is removed by omitting it. [] clears all tags.
+  tags?: string[];
 }
 
 export interface ChargeSetupFeeResult {
@@ -175,6 +183,45 @@ export interface AdminAuditEntry {
 
 export interface AdminClientsListResult {
   clients: AdminClient[];
+  // Every distinct tag in use, sorted — lets the filter render without a
+  // second request. Optional so an older backend still parses.
+  all_tags?: string[];
+}
+
+// GET /admin/clients/platform-overview — the owner's cross-client roll-up.
+export interface PlatformTotals {
+  clients: number;
+  active_clients: number;
+  idle_clients: number;
+  suspended_clients: number;
+  unmetered_clients: number;
+  low_balance_clients: number;
+  total_calls: number;
+  total_minutes: number;
+  connected_calls: number;
+  success_rate: number;
+  revenue_inr: number;
+  outstanding_credit_seconds: number;
+}
+
+export interface PlatformClientRow {
+  organization_id: number;
+  organization_name: string;
+  calls: number;
+  minutes: number;
+  connected_calls: number;
+  money_spent_inr: number;
+  credits_seconds_remaining?: number | null;
+  unmetered: boolean;
+  suspended: boolean;
+  tags: string[];
+}
+
+export interface PlatformOverviewResult {
+  period: string;
+  totals: PlatformTotals;
+  tags: { tag: string; clients: number }[];
+  clients: PlatformClientRow[];
 }
 
 export interface RetryProvisionResult {
@@ -303,6 +350,15 @@ function adminFetch<T>(
 
 export const listAdminClients = (token: string) =>
   adminFetch<AdminClientsListResult>(token, "");
+
+export const getPlatformOverview = (
+  token: string,
+  period: "day" | "week" | "month" = "month",
+) =>
+  adminFetch<PlatformOverviewResult>(
+    token,
+    `/platform-overview?period=${period}`,
+  );
 
 export const retryProvisionClient = (
   token: string,

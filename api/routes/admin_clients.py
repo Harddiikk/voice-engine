@@ -10,7 +10,7 @@ a DID by creating/updating the org's ``voicelink`` telephony configuration
 row. All endpoints require superuser privileges.
 """
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
@@ -19,10 +19,12 @@ from api.db import db_client
 from api.db.credit_ledger_client import ALREADY_APPLIED, UNMETERED
 from api.db.models import OrganizationModel, UserModel
 from api.enums import OrganizationConfigurationKey
+from api.services.admin.platform_overview import build_platform_overview
 from api.schemas.admin_clients import (
     AdminPlanCard,
     AddNoteRequest,
     AdminAuditItem,
+    PlatformOverviewResponse,
     AdminAuditListResponse,
     AdminClientDetailResponse,
     AdminClientItem,
@@ -169,6 +171,25 @@ async def _load_live_index(vl_client):
     except VoiceLinkClientError as e:
         logger.warning(f"VoiceLink live reconcile failed: {e}")
         return None, "unknown"
+
+
+@router.get("/platform-overview", response_model=PlatformOverviewResponse)
+async def platform_overview(
+    period: Literal["day", "week", "month"] = Query(
+        "month",
+        description="Window for call/minute totals: day=30d, week=12w, month=12m.",
+    ),
+    user: UserModel = Depends(get_superuser),
+) -> PlatformOverviewResponse:
+    """Owner view: every client rolled into one summary.
+
+    The existing /organization/overview is scoped to the caller's selected org.
+    This is the cross-client counterpart — what the whole platform did, who is
+    active, who is running dry. The caller's own orgs are excluded so the
+    numbers describe clients rather than the owner's test tenant.
+    """
+    data = await build_platform_overview(exclude_user_id=user.id, period=period)
+    return PlatformOverviewResponse(**data)
 
 
 @router.get("", response_model=AdminClientsListResponse)
@@ -814,6 +835,7 @@ async def get_client_detail(
         did_number=did_number,
         plan=plan,
         plan_override=profile.get("plan_override"),
+        tags=normalize_tags(profile.get("tags")),
         features=features_for_plan(plan),
         pricing=AdminPricing(**pricing),
         money=AdminMoney(**money),

@@ -41,6 +41,51 @@ class AdminClientItem(BaseModel):
     tags: List[str] = Field(default_factory=list)
 
 
+class PlatformTotals(BaseModel):
+    """Cross-client totals for the owner console."""
+
+    clients: int = 0
+    active_clients: int = 0
+    idle_clients: int = 0
+    suspended_clients: int = 0
+    unmetered_clients: int = 0
+    # Metered clients at or below the low-balance floor — the owner sees these
+    # before the client's own low-credit alert fires.
+    low_balance_clients: int = 0
+    total_calls: int = 0
+    total_minutes: float = 0.0
+    connected_calls: int = 0
+    success_rate: float = 0.0
+    revenue_inr: float = 0.0
+    outstanding_credit_seconds: int = 0
+
+
+class PlatformTagCount(BaseModel):
+    tag: str
+    clients: int
+
+
+class PlatformClientRow(BaseModel):
+    organization_id: int
+    organization_name: str
+    calls: int = 0
+    minutes: float = 0.0
+    connected_calls: int = 0
+    money_spent_inr: float = 0.0
+    credits_seconds_remaining: Optional[int] = None
+    unmetered: bool = False
+    suspended: bool = False
+    tags: List[str] = Field(default_factory=list)
+
+
+class PlatformOverviewResponse(BaseModel):
+    period: str
+    totals: PlatformTotals
+    tags: List[PlatformTagCount] = Field(default_factory=list)
+    # Busiest client first.
+    clients: List[PlatformClientRow] = Field(default_factory=list)
+
+
 class AdminClientsListResponse(BaseModel):
     clients: List[AdminClientItem]
     # Every distinct tag in use across all clients, sorted — lets the console
@@ -308,6 +353,8 @@ class AdminClientDetailResponse(BaseModel):
     # the raw admin override (null = derived from purchases).
     plan: str
     plan_override: Optional[str] = None
+    # Owner-facing segmentation labels.
+    tags: List[str] = Field(default_factory=list)
     features: Dict[str, bool] = Field(default_factory=dict)
     pricing: AdminPricing
     money: AdminMoney
