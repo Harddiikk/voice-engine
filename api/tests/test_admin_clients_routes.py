@@ -51,6 +51,10 @@ def _stub_billing_helpers():
             "api.routes.admin_clients.is_org_suspended",
             new=AsyncMock(return_value=False),
         ),
+        patch(
+            "api.routes.admin_clients.get_org_tags",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         yield
 

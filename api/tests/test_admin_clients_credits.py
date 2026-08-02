@@ -397,6 +397,10 @@ def test_list_clients_reports_credits_and_null_passthrough():
             "api.routes.admin_clients.is_org_suspended",
             new=AsyncMock(return_value=False),
         ),
+        patch(
+            "api.routes.admin_clients.get_org_tags",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         db.list_organizations_with_users = AsyncMock(
             return_value=[metered, unmetered]

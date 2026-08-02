@@ -24,6 +24,8 @@ import {
   PhoneIncoming,
   Settings,
   Sparkles,
+  ToggleLeft,
+  ToggleRight,
   UserRound,
   Users,
   Workflow,
@@ -93,6 +95,23 @@ type SidebarNavSection = {
 };
 
 const TELEPHONY_WARNING_COPY = "Action required";
+
+// "Owner mode": the deployment owner runs the business from this account —
+// reading platform analytics and managing clients — and builds agents inside a
+// client's own tenant via impersonation, not here. Showing the full builder
+// nav on that account is noise, so owner mode narrows the sidebar to these
+// destinations. It is a VIEW preference, not a permission: every route stays
+// reachable by URL, and the toggle restores the full nav, because the owner
+// does occasionally need the builder on their own account.
+const OWNER_MODE_URLS = new Set<string>([
+  "/home",
+  "/analytics",
+  "/clients",
+  "/credits",
+  "/settings",
+]);
+
+const OWNER_MODE_STORAGE_KEY = "sidebar:owner-mode";
 
 const NAV_SECTIONS: SidebarNavSection[] = [
   {
@@ -260,6 +279,33 @@ export function AppSidebar() {
       window.localStorage.setItem("sidebar:advanced-open", String(open));
     } catch {
       // Non-fatal: state still toggles for this session.
+    }
+  }, []);
+
+  // Owner mode. Defaults ON for superusers (the owner account is a business
+  // console, not a build surface) and is meaningless for everyone else. Read
+  // after mount so SSR and the first client render agree — initialising from
+  // localStorage directly would hydrate-mismatch.
+  const [ownerMode, setOwnerMode] = React.useState(false);
+  React.useEffect(() => {
+    if (!isSuperuser) {
+      setOwnerMode(false);
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem(OWNER_MODE_STORAGE_KEY);
+      setOwnerMode(stored === null ? true : stored === "true");
+    } catch {
+      setOwnerMode(true);
+    }
+  }, [isSuperuser]);
+
+  const handleOwnerModeChange = React.useCallback((enabled: boolean) => {
+    setOwnerMode(enabled);
+    try {
+      window.localStorage.setItem(OWNER_MODE_STORAGE_KEY, String(enabled));
+    } catch {
+      // Non-fatal: the preference just won't survive a reload.
     }
   }, []);
 
@@ -464,7 +510,11 @@ export function AppSidebar() {
               (!item.superuserOnly || isSuperuser) &&
               (!item.requiresFeature ||
                 isSuperuser ||
-                planFeatures[item.requiresFeature])
+                planFeatures[item.requiresFeature]) &&
+              // Owner mode narrows the nav to the business-console routes.
+              // Applied last so it can only ever REMOVE entries — it must not
+              // reveal something the permission checks above excluded.
+              (!ownerMode || OWNER_MODE_URLS.has(item.url))
           );
           if (visibleItems.length === 0) {
             return null;
@@ -532,6 +582,29 @@ export function AppSidebar() {
             </SidebarGroup>
           );
         })}
+
+        {/* Owner-mode switch. Superusers only, and hidden in the icon-only
+            sidebar where there is no room for a label. */}
+        {isSuperuser && !isCollapsed && (
+          <SidebarGroup className="mt-6">
+            <button
+              type="button"
+              onClick={() => handleOwnerModeChange(!ownerMode)}
+              aria-pressed={ownerMode}
+              className="notranslate flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              translate="no"
+            >
+              {ownerMode ? (
+                <ToggleRight className="h-4 w-4 shrink-0" />
+              ) : (
+                <ToggleLeft className="h-4 w-4 shrink-0" />
+              )}
+              <span className="truncate">
+                {ownerMode ? "Owner view" : "Full view"}
+              </span>
+            </button>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter

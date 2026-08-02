@@ -58,7 +58,9 @@ from api.services.admin.profile import (
     get_admin_profile,
     get_org_money,
     get_org_pricing,
+    get_org_tags,
     is_org_suspended,
+    normalize_tags,
     setup_fee_seconds,
     update_admin_profile,
 )
@@ -232,6 +234,9 @@ async def list_clients(
         plan = await get_org_plan(organization.id)
         money = await get_org_money(organization.id)
         suspended = await is_org_suspended(organization.id)
+        # Segmentation labels live in the same per-client profile blob as the
+        # plan/pricing overrides above.
+        client_tags = await get_org_tags(organization.id)
 
         clients.append(
             AdminClientItem(
@@ -255,10 +260,12 @@ async def list_clients(
                 money_left_inr=money["money_left_inr"],
                 money_spent_inr=money["money_spent_inr"],
                 suspended=suspended,
+                tags=client_tags,
             )
         )
 
-    return AdminClientsListResponse(clients=clients)
+    all_tags = sorted({tag for client in clients for tag in client.tags})
+    return AdminClientsListResponse(clients=clients, all_tags=all_tags)
 
 
 @router.post("/{org_id}/retry-provision", response_model=RetryProvisionResponse)
@@ -890,6 +897,7 @@ async def update_client_profile(
         has_gemini_key=bool(profile.get("gemini_api_key")),
         plan_card=_plan_card_or_none(profile),
         plan_expires_at=profile.get("plan_expires_at"),
+        tags=normalize_tags(profile.get("tags")),
     )
 
 

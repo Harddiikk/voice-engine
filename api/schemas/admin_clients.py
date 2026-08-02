@@ -36,10 +36,16 @@ class AdminClientItem(BaseModel):
     money_left_inr: Optional[float] = None
     money_spent_inr: float = 0.0
     suspended: bool = False
+    # Owner-facing segmentation labels ("via-shreyas", "gym", "pilot", ...).
+    # Normalised lowercase; empty when the client has never been tagged.
+    tags: List[str] = Field(default_factory=list)
 
 
 class AdminClientsListResponse(BaseModel):
     clients: List[AdminClientItem]
+    # Every distinct tag in use across all clients, sorted — lets the console
+    # build its filter control without a second round trip.
+    all_tags: List[str] = Field(default_factory=list)
 
 
 class RetryProvisionRequest(BaseModel):
@@ -344,6 +350,10 @@ class AdminProfileUpdateRequest(BaseModel):
     plan_card: Optional[AdminPlanCard] = None
     # Plan expiry (ISO timestamp); null clears back to "never purchased".
     plan_expires_at: Optional[str] = None
+    # Owner-facing segmentation labels. Send the FULL desired list (this
+    # replaces rather than merges, so a tag is removed by omitting it); send
+    # [] or null to clear all tags. Normalised to lowercase server-side.
+    tags: Optional[List[str]] = None
 
     @field_validator("plan_override")
     @classmethod
@@ -366,6 +376,7 @@ class AdminProfileResponse(BaseModel):
     suspended: bool = False
     show_dograh_voice: bool = False
     has_gemini_key: bool = False
+    tags: List[str] = Field(default_factory=list)
 
 
 class AddNoteRequest(BaseModel):

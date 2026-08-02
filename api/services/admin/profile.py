@@ -23,6 +23,46 @@ MAX_NOTES = 200
 # Sentinel: "argument not passed" (vs None, which means "clear the override").
 _UNSET = object()
 
+# Bound the tag list so one client can't bloat the profile blob.
+MAX_TAGS = 20
+MAX_TAG_LENGTH = 32
+
+
+def normalize_tags(tags: Any) -> list[str]:
+    """Clean a caller-supplied tag list into stable, comparable labels.
+
+    Lowercased and whitespace-collapsed so "Via Shreyas", "via shreyas" and
+    "via  Shreyas" are the same segment rather than three near-duplicates that
+    quietly split a filter. Order is preserved (first occurrence wins) because
+    the first tag is what the client list shows when space is tight.
+    """
+    if not tags:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in tags:
+        if not isinstance(raw, str):
+            continue
+        label = " ".join(raw.split()).lower()[:MAX_TAG_LENGTH].strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        out.append(label)
+        if len(out) >= MAX_TAGS:
+            break
+    return out
+
+
+async def get_org_tags(organization_id: int) -> list[str]:
+    """The org's segmentation tags (empty when never tagged).
+
+    A named accessor rather than an inline profile read so the client-list
+    route can be exercised without a database, matching how get_org_plan /
+    get_org_money / is_org_suspended are already consumed there.
+    """
+    profile = await get_admin_profile(organization_id)
+    return normalize_tags(profile.get("tags"))
+
 
 async def get_admin_profile(organization_id: int) -> dict:
     """The org's admin profile dict (empty when never set)."""
@@ -50,6 +90,7 @@ async def update_admin_profile(
     gemini_api_key: Any = _UNSET,
     plan_card: Any = _UNSET,
     plan_expires_at: Any = _UNSET,
+    tags: Any = _UNSET,
 ) -> dict:
     """Partial update — only the passed fields change. Pass ``None`` to clear a
     pricing/plan override back to the default; omit to leave unchanged."""
@@ -79,6 +120,13 @@ async def update_admin_profile(
             profile["plan_card"] = dict(plan_card)
         else:
             profile.pop("plan_card", None)
+    if tags is not _UNSET:
+        # Owner-facing client labels used to segment the client list
+        # ("via-shreyas", "gym", "pilot", ...). Normalised so the same label
+        # typed two ways can't split a segment in the filter UI.
+        profile["tags"] = normalize_tags(tags)
+        if not profile["tags"]:
+            profile.pop("tags", None)
     if plan_expires_at is not _UNSET:
         # ISO timestamp; None clears (plan becomes "never purchased").
         if plan_expires_at:
