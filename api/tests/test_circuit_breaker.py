@@ -265,9 +265,14 @@ class TestRecordAndEvaluate:
 
             await cb.record_and_evaluate(campaign_id=42, is_failure=True)
 
-            # Verify campaign was paused
+            # Verify campaign was paused, and that it records WHY — a bare
+            # state='paused' is indistinguishable from an out-of-credits or
+            # budget pause, which is what made paused campaigns hard to
+            # diagnose.
             mock_db.update_campaign.assert_called_once_with(
-                campaign_id=42, state="paused"
+                campaign_id=42,
+                state="paused",
+                pause_reason="circuit_breaker",
             )
 
             # Verify event was published

@@ -8,7 +8,11 @@ from loguru import logger
 from api.constants import DEFAULT_ORG_CONCURRENCY_LIMIT
 from api.db import db_client
 from api.db.models import QueuedRunModel, WorkflowRunModel
-from api.enums import OrganizationConfigurationKey, WorkflowRunState
+from api.enums import (
+    CampaignPauseReason,
+    OrganizationConfigurationKey,
+    WorkflowRunState,
+)
 from api.services.campaign.circuit_breaker import circuit_breaker
 from api.services.campaign.concurrency import resolve_campaign_concurrency
 from api.services.campaign.errors import (
@@ -94,7 +98,11 @@ class CampaignCallDispatcher:
                 f"Campaign {campaign_id}: org {campaign.organization_id} out of trial "
                 f"call seconds — pausing campaign"
             )
-            await db_client.update_campaign(campaign_id=campaign_id, state="paused")
+            await db_client.update_campaign(
+                campaign_id=campaign_id,
+                state="paused",
+                pause_reason=CampaignPauseReason.OUT_OF_CREDITS.value,
+            )
             return 0
 
         # Per-campaign budget cap: pause once the campaign has consumed its
@@ -104,7 +112,11 @@ class CampaignCallDispatcher:
             logger.warning(
                 f"Campaign {campaign_id}: spend budget reached — pausing campaign"
             )
-            await db_client.update_campaign(campaign_id=campaign_id, state="paused")
+            await db_client.update_campaign(
+                campaign_id=campaign_id,
+                state="paused",
+                pause_reason=CampaignPauseReason.BUDGET_EXHAUSTED.value,
+            )
             return 0
 
         # Atomically claim queued runs for processing (thread-safe)

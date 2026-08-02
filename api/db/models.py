@@ -750,6 +750,13 @@ class CampaignModel(Base):
         default="created",
     )
 
+    # Why the campaign last moved to 'paused'. Several independent code paths
+    # auto-pause (credits exhausted, spend budget, circuit breaker, orchestrator
+    # failure) and all of them wrote the same bare state, so a paused campaign
+    # gave no clue which. NULL = paused by a human, or paused before this
+    # column existed. See api/enums.py CampaignPauseReason.
+    pause_reason = Column(String(48), nullable=True)
+
     # Progress tracking
     total_rows = Column(Integer, nullable=True)
     processed_rows = Column(Integer, nullable=False, default=0)

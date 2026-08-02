@@ -17,6 +17,20 @@ class CallType(Enum):
     OUTBOUND = "outbound"
 
 
+class CampaignPauseReason(str, Enum):
+    """Why a campaign was auto-paused.
+
+    Stored on ``campaigns.pause_reason``. Several independent paths pause a
+    campaign and all of them used to write a bare ``state='paused'``, so the
+    reason had to be recovered from container logs. A human pause leaves the
+    column NULL.
+    """
+
+    OUT_OF_CREDITS = "out_of_credits"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    CIRCUIT_BREAKER = "circuit_breaker"
+
+
 class TelephonyCallStatus(str, Enum):
     INITIATED = "initiated"
     RINGING = "ringing"

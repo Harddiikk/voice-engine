@@ -31,6 +31,7 @@ from api.constants import (
     REDIS_URL,
 )
 from api.db import db_client
+from api.enums import CampaignPauseReason
 from api.services.campaign.campaign_event_publisher import get_campaign_event_publisher
 from api.services.campaign.concurrency import (
     apply_throttle,
@@ -374,7 +375,11 @@ class CircuitBreaker:
 
                 recent_failures = await self._get_recent_failures(campaign_id)
 
-                await db_client.update_campaign(campaign_id=campaign_id, state="paused")
+                await db_client.update_campaign(
+                    campaign_id=campaign_id,
+                    state="paused",
+                    pause_reason=CampaignPauseReason.CIRCUIT_BREAKER.value,
+                )
                 await db_client.append_campaign_log(
                     campaign_id=campaign_id,
                     level="warning",

@@ -221,6 +221,10 @@ class CampaignResponse(BaseModel):
     workflow_id: int
     workflow_name: str
     state: str
+    # Why the campaign auto-paused: out_of_credits | budget_exhausted |
+    # circuit_breaker. None when running, or when a human paused it. Cleared
+    # automatically on resume. See api/enums.py CampaignPauseReason.
+    pause_reason: Optional[str] = None
     source_type: str
     source_id: str
     # Count of duplicate-phone-number rows silently removed from the last
@@ -379,6 +383,11 @@ def _build_campaign_response(
         workflow_id=campaign.workflow_id,
         workflow_name=workflow_name,
         state=campaign.state,
+        # getattr rather than attribute access: this builder is also fed
+        # lightweight campaign stand-ins (tests, partially-selected rows) that
+        # carry only the columns a caller needs, and a missing new column
+        # should degrade to "reason unknown" rather than 500 the list endpoint.
+        pause_reason=getattr(campaign, "pause_reason", None),
         source_type=campaign.source_type,
         source_id=campaign.source_id,
         duplicates_removed=duplicates_removed,

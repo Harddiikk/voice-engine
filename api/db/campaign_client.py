@@ -139,6 +139,11 @@ class CampaignClient(BaseDBClient):
                 raise ValueError(f"Campaign {campaign_id} not found")
 
             campaign.state = state
+            # Any move OFF 'paused' clears the auto-pause reason, so a resumed
+            # campaign never carries a stale "out of credits" label that would
+            # misdiagnose its next pause.
+            if state != "paused":
+                campaign.pause_reason = None
             if state == "running" and not campaign.started_at:
                 campaign.started_at = datetime.now(UTC)
             elif state in ["completed", "failed"]:

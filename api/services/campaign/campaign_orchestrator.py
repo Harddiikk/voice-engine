@@ -21,7 +21,7 @@ from loguru import logger
 from api.constants import REDIS_URL
 from api.db import db_client
 from api.db.models import CampaignModel, QueuedRunModel
-from api.enums import RedisChannel
+from api.enums import CampaignPauseReason, RedisChannel
 from api.services.campaign.campaign_event_protocol import (
     BatchCompletedEvent,
     BatchFailedEvent,
@@ -386,7 +386,11 @@ class CampaignOrchestrator:
                     f"campaign_id: {campaign_id} - Circuit breaker is open, "
                     f"pausing campaign. Stats: {stats}"
                 )
-                await db_client.update_campaign(campaign_id=campaign_id, state="paused")
+                await db_client.update_campaign(
+                    campaign_id=campaign_id,
+                    state="paused",
+                    pause_reason=CampaignPauseReason.CIRCUIT_BREAKER.value,
+                )
                 await db_client.append_campaign_log(
                     campaign_id=campaign_id,
                     level="warning",

@@ -577,6 +577,26 @@ class CreditLedgerClient(BaseDBClient):
             result = await session.execute(query)
             return int(result.scalar_one() or 0)
 
+    async def sum_credited_seconds(self, organization_id: int) -> int:
+        """Total credit-seconds ever ADDED to the org (topups, grants, refunds).
+
+        Sums every positive ledger delta regardless of kind, so anything that
+        raises the balance counts. Used as a monotonic "funding cycle" key for
+        low-balance alerts: the value only changes when the org is credited, so
+        a top-up starts a fresh cycle and re-arms alerts that already fired,
+        while ordinary call spend leaves it untouched.
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(
+                    func.coalesce(func.sum(CreditLedgerModel.delta_seconds), 0)
+                ).where(
+                    CreditLedgerModel.organization_id == organization_id,
+                    CreditLedgerModel.delta_seconds > 0,
+                )
+            )
+            return int(result.scalar_one() or 0)
+
     async def sum_on_hold_seconds(self, organization_id: int) -> int:
         """Total seconds currently reserved by the org's unsettled in-flight runs."""
         async with self.async_session() as session:
