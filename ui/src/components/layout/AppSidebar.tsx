@@ -79,6 +79,8 @@ type SidebarNavItem = {
   title: string;
   url: string;
   icon: LucideIcon;
+  /** Keep the route/configuration available without advertising it in navigation. */
+  hidden?: boolean;
   showsTelephonyWarning?: boolean;
   /** Only visible to org admins (model/provider/API-key/engine settings). */
   adminOnly?: boolean;
@@ -148,8 +150,9 @@ const NAV_SECTIONS: SidebarNavSection[] = [
         title: "Models",
         url: "/model-configurations",
         icon: Brain,
-        // Client-visible on purpose: orgs pick their own voice/language/model
-        // (and paste their own provider keys) in the portal.
+        // Voice is selected per agent. Keep Models available by direct URL for
+        // administrative/configuration work, but do not show it in the sidebar.
+        hidden: true,
       },
       {
         title: "Telephony",
@@ -514,6 +517,7 @@ export function AppSidebar() {
         {NAV_SECTIONS.map((section, index) => {
           const visibleItems = section.items.filter(
             (item) =>
+              !item.hidden &&
               (!item.adminOnly || isAdmin) &&
               (!item.superuserOnly || isSuperuser) &&
               (!item.requiresFeature ||
