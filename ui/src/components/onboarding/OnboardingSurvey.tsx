@@ -66,7 +66,7 @@ const SELECTS: Field[] = [
 ];
 
 export function OnboardingSurvey() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, redirectToLogin } = useAuth();
   const [open, setOpen] = useState(false);
   const [company, setCompany] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -79,13 +79,17 @@ export function OnboardingSurvey() {
     (async () => {
       try {
         const res = await client.get({ url: URL });
+        if (res.error) {
+          if (res.response?.status === 401) redirectToLogin();
+          return;
+        }
         const data = res.data as { completed?: boolean } | undefined;
-        if (!data?.completed) setOpen(true);
+        if (data && !data.completed) setOpen(true);
       } catch {
         // If we can't tell, don't nag.
       }
     })();
-  }, [authLoading, user]);
+  }, [authLoading, user, redirectToLogin]);
 
   async function persist(payload: Record<string, unknown>) {
     setSaving(true);
