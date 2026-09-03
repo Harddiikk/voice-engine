@@ -953,6 +953,9 @@ def create_realtime_llm_service(user_config, audio_config: "AudioConfig"):
             ),
         )
     elif provider == ServiceProviders.GOOGLE_REALTIME.value:
+        from api.services.configuration.options.google import (
+            GOOGLE_REALTIME_LANGUAGE_CODES,
+        )
         from api.services.pipecat.realtime.gemini_live import (
             DograhGeminiLiveLLMService,
         )
@@ -964,12 +967,20 @@ def create_realtime_llm_service(user_config, audio_config: "AudioConfig"):
             "voice": voice or "Puck",
         }
         if language:
-            settings_kwargs["language"] = language
+            # DograhGeminiLiveLLMService sends this straight through as
+            # speech_config.language_code, bypassing pipecat's own
+            # BCP-47 mapper — resolve our short codes ourselves.
+            settings_kwargs["language"] = GOOGLE_REALTIME_LANGUAGE_CODES.get(
+                language, language
+            )
         return DograhGeminiLiveLLMService(
             api_key=api_key,
             settings=DograhGeminiLiveLLMService.Settings(**settings_kwargs),
         )
     elif provider == ServiceProviders.GOOGLE_VERTEX_REALTIME.value:
+        from api.services.configuration.options.google import (
+            GOOGLE_REALTIME_LANGUAGE_CODES,
+        )
         from api.services.pipecat.realtime.gemini_live_vertex import (
             DograhGeminiLiveVertexLLMService,
         )
@@ -983,7 +994,11 @@ def create_realtime_llm_service(user_config, audio_config: "AudioConfig"):
             "voice": voice or "Charon",
         }
         if language:
-            settings_kwargs["language"] = language
+            # Same raw-passthrough quirk as GOOGLE_REALTIME above — the
+            # Vertex variant inherits GeminiLiveLLMService._connect() unchanged.
+            settings_kwargs["language"] = GOOGLE_REALTIME_LANGUAGE_CODES.get(
+                language, language
+            )
         return DograhGeminiLiveVertexLLMService(
             credentials=credentials,
             project_id=project_id,

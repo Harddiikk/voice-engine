@@ -88,6 +88,43 @@ GOOGLE_REALTIME_LANGUAGES = (
     "zh",
 )
 
+# Gemini Live's speech_config.language_code is sent verbatim by
+# DograhGeminiLiveLLMService (it reads self._settings.language directly,
+# bypassing pipecat's own Language-enum -> BCP-47 mapper) — a bare code like
+# "hi" is rejected outright by current models ("Unsupported language code
+# 'hi'"; confirmed live 2026-09-03, the retired gemini-3.1-flash-live-preview
+# tolerated it but gemini-2.5-flash-native-audio-latest does not). Resolve
+# GOOGLE_REALTIME_LANGUAGES entries to full codes before they reach the
+# service. Values mirror pipecat's own LANGUAGE_MAP in
+# services/google/gemini_live/llm.py — keep the two in sync.
+GOOGLE_REALTIME_LANGUAGE_CODES = {
+    "ar": "ar-XA",
+    "bn": "bn-IN",
+    "de": "de-DE",
+    "en": "en-US",
+    "es": "es-ES",
+    "fr": "fr-FR",
+    "gu": "gu-IN",
+    "hi": "hi-IN",
+    "id": "id-ID",
+    "it": "it-IT",
+    "ja": "ja-JP",
+    "kn": "kn-IN",
+    "ko": "ko-KR",
+    "ml": "ml-IN",
+    "mr": "mr-IN",
+    "nl": "nl-NL",
+    "pl": "pl-PL",
+    "pt": "pt-BR",
+    "ru": "ru-RU",
+    "ta": "ta-IN",
+    "te": "te-IN",
+    "th": "th-TH",
+    "tr": "tr-TR",
+    "vi": "vi-VN",
+    "zh": "cmn-CN",
+}
+
 GOOGLE_VERTEX_REALTIME_MODELS = ("google/gemini-live-2.5-flash-native-audio",)
 GOOGLE_VERTEX_REALTIME_VOICES = GOOGLE_REALTIME_VOICES
 GOOGLE_VERTEX_REALTIME_LANGUAGES = GOOGLE_REALTIME_LANGUAGES
