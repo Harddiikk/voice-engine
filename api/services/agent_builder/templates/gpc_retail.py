@@ -37,7 +37,7 @@ DEFAULT_MODEL_CONFIG: Dict[str, Any] = {
         "realtime": {
             "realtime": {
                 "provider": "google_realtime",
-                "model": "gemini-3.1-flash-live-preview",
+                "model": "gemini-2.5-flash-native-audio-latest",
                 "voice": "Puck",
                 "language": "en",
             },

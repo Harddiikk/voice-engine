@@ -11,7 +11,15 @@ GOOGLE_VERTEX_MODELS = (
     "gemini-3.5-flash",
 )
 
-GOOGLE_REALTIME_MODELS = ("gemini-3.1-flash-live-preview",)
+# "gemini-3.1-flash-live-preview" was retired by Google (confirmed gone from
+# models.list as of 2026-09-03, along with every other dated preview that
+# predates it) — no Gemini 3.x model currently supports bidiGenerateContent on
+# AI Studio. "-latest" tracks whichever dated snapshot Google currently has
+# live, so it's the default; the dated snapshot is kept as a pinnable fallback.
+GOOGLE_REALTIME_MODELS = (
+    "gemini-2.5-flash-native-audio-latest",
+    "gemini-2.5-flash-native-audio-preview-09-2025",
+)
 
 # Full Gemini Live / native-audio prebuilt voice catalog. Each entry carries a
 # commonly-perceived gender and a one-word character so the UI can show tags and
